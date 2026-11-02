@@ -4,10 +4,6 @@
     "src/**/*.js": {
       "maxDuration": 60,
       "includeFiles": "public/**"
-    },
-    "api/**/*.js": {
-      "maxDuration": 60,
-      "includeFiles": "public/**"
     }
   }
 }
