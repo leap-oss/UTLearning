@@ -162,3 +162,6 @@ export function createApp({
 
   return app;
 }
+
+export const app = createApp();
+export default app;
