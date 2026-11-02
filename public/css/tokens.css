@@ -1,22 +1,85 @@
+/* UT AI Learning Companion · design tokens
+ * Editorial dark: graphite paper, chalk ink, serif for reading and titles,
+ * grotesk for interface, mono only for measured figures.
+ * Colour carries state, never decoration:
+ *   primary  chalk fill        the one main action per view
+ *   accent   blue              information, in progress, focus, links
+ *   ok       green             mastered, correct, verified
+ *   review   amber             needs review, weak topic, pending check
+ *   bad      red               errors, wrong answers, destructive */
 :root {
   color-scheme: dark;
-  --space-3xs: 2px; --space-2xs: 4px; --space-xs: 8px; --space-sm: 12px; --space-md: 16px; --space-lg: 24px; --space-xl: 40px; --space-2xl: 64px; --space-3xl: 96px; --space-4xl: 144px;
-  --text-xs: 0.75rem; --text-sm: 0.875rem; --text-md: 1rem; --text-lg: 1.2rem; --text-xl: 1.44rem; --text-2xl: 1.728rem; --text-3xl: 2.074rem;
-  --text-display-s: 1.44rem; --text-display: 1.728rem; --text-section: 1.2rem; --text-title: 1rem; --text-lead: 1rem;
-  --ease-out: cubic-bezier(0.16, 1, 0.3, 1); --ease-in: cubic-bezier(0.7, 0, 0.84, 0); --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
-  --dur-micro: 120ms; --dur-short: 220ms; --dur-long: 420ms;
-  --color-error: oklch(72% 0.15 27); --color-success: oklch(76% 0.13 150);
-  --container: 1440px; --gutter: 64px; --gap-columns: 32px; --section-gap-s: 120px; --section-gap: 144px; --section-gap-l: 176px;
+
+  /* Spacing (4px base) */
+  --space-3xs: 2px; --space-2xs: 4px; --space-xs: 8px; --space-sm: 12px; --space-md: 16px;
+  --space-lg: 24px; --space-xl: 40px; --space-2xl: 64px; --space-3xl: 96px; --space-4xl: 144px;
+
+  /* Type scale, 1.25 from a 16px body */
+  --text-2xs: 0.75rem;   /* 12 tags only */
+  --text-xs: 0.8125rem;  /* 13 meta, captions */
+  --text-sm: 0.875rem;   /* 14 controls, labels */
+  --text-md: 1rem;       /* 16 interface body */
+  --text-lg: 1.125rem;   /* 18 reading body, row titles */
+  --text-xl: 1.25rem;    /* 20 sub-heads */
+  --text-2xl: 1.5625rem; /* 25 section heads */
+  --text-3xl: 1.953rem;  /* 31 page titles (compact) */
+  --text-display: 2.441rem; /* 39 page titles */
+  --text-display-s: var(--text-3xl); --text-section: var(--text-2xl); --text-title: var(--text-xl); --text-lead: var(--text-lg);
+
+  /* Motion */
+  --ease-out: cubic-bezier(0.2, 0, 0, 1); --ease-in: cubic-bezier(0.7, 0, 0.84, 0); --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
+  --dur-micro: 120ms; --dur-short: 150ms; --dur-long: 300ms;
+
+  /* Layout */
+  --container: 1180px; --measure: 68ch; --gutter: 40px; --gap-columns: 32px; --topbar-h: 56px;
+  --section-gap-s: 120px; --section-gap: 144px; --section-gap-l: 176px;
+
+  /* Layers */
   --z-base: 1; --z-raised: 10; --z-dropdown: 100; --z-sticky: 200; --z-sticky-nav: 300; --z-modal: 400; --z-toast: 500; --z-tooltip: 600;
-  --color-paper: oklch(17% 0.008 250); --color-paper-2: oklch(21% 0.009 250); --color-paper-3: oklch(13.5% 0.007 250);
-  --color-ink: oklch(95% 0.005 250); --color-ink-2: oklch(83% 0.008 250); --color-muted: oklch(71% 0.01 250);
-  --color-rule: oklch(31% 0.01 250); --color-rule-2: oklch(42% 0.012 250);
-  --color-accent: oklch(82% 0.15 80); --color-accent-ink: oklch(18% 0.04 75); --color-accent-soft: oklch(29% 0.05 80); --color-focus: oklch(82% 0.15 80);
-  --color-cool: oklch(77% 0.12 245); --color-cool-soft: oklch(29% 0.05 245);
-  --color-ok: oklch(76% 0.15 150); --color-ok-soft: oklch(24.5% 0.03 150); --color-bad: oklch(70% 0.17 25); --color-bad-soft: oklch(24.5% 0.035 25);
-  --font-display: "Host Grotesk", ui-sans-serif, system-ui, sans-serif; --font-body: var(--font-display);
+
+  /* Surfaces: sunken < paper < raised < raised-hover */
+  --color-paper: oklch(15.5% 0.007 255);
+  --color-paper-2: oklch(18.5% 0.008 255);
+  --color-paper-3: oklch(12.5% 0.006 255);
+  --color-paper-4: oklch(22% 0.009 255);
+
+  /* Ink */
+  --color-ink: oklch(95% 0.004 255);
+  --color-ink-2: oklch(85% 0.006 255);
+  --color-muted: oklch(71% 0.01 255);
+  --color-faint: oklch(60% 0.01 255);
+
+  /* Rules */
+  --color-rule: oklch(26% 0.008 255);
+  --color-rule-2: oklch(35% 0.01 255);
+
+  /* Primary action: chalk */
+  --color-primary: oklch(93% 0.012 85);
+  --color-primary-hover: oklch(97% 0.008 85);
+  --color-primary-ink: oklch(17% 0.01 255);
+
+  /* Semantic signals */
+  --color-accent: oklch(76% 0.12 245);
+  --color-accent-ink: oklch(16% 0.03 245);
+  --color-accent-soft: oklch(25% 0.045 245);
+  --color-focus: oklch(76% 0.14 245);
+  --color-ok: oklch(77% 0.14 155);
+  --color-ok-soft: oklch(24% 0.04 155);
+  --color-review: oklch(81% 0.13 78);
+  --color-review-soft: oklch(26% 0.05 78);
+  --color-bad: oklch(71% 0.16 25);
+  --color-bad-soft: oklch(24% 0.05 25);
+  --color-error: var(--color-bad); --color-success: var(--color-ok);
+  --color-scrim: oklch(10% 0.006 255 / 0.78);
+
+  /* Faces */
+  --font-display: "Newsreader", Georgia, "Times New Roman", serif;
+  --font-body: "Host Grotesk", ui-sans-serif, system-ui, sans-serif;
   --font-outlier: "Atkinson Hyperlegible Mono", ui-monospace, monospace;
-  --radius-card: 10px; --radius-pill: 6px; --rule-hair: 1px;
+  --tracking-display: -0.012em; --display-weight: 400;
+
+  /* Shape */
+  --radius-xs: 4px; --radius-sm: 6px; --radius-md: 8px; --radius-card: 12px; --radius-pill: 6px; --rule-hair: 1px;
   --shadow-card: none;
-  --tracking-display: -0.03em; --display-weight: 500;
+  --shadow-pop: 0 12px 32px -12px oklch(5% 0.01 255 / 0.6), 0 0 0 1px var(--color-rule-2);
 }

@@ -96,6 +96,10 @@ document.addEventListener('alpine:init', () => {
     },
 
     async init() {
+      this.$watch('currentView', () => this.focusViewTitle());
+      this.$watch('showCourseModal', (open) => open && this.focusFirstField('#course-code-input'));
+      this.$watch('showModuleModal', (open) => open && this.focusFirstField('#module-num-input'));
+      this.$watch('confirmDialog.open', (open) => open && this.focusFirstField('#confirm-cancel-btn'));
       await Promise.all([this.loadCourses(), this.refreshSystemStatus()]);
     },
 
@@ -1090,9 +1094,9 @@ document.addEventListener('alpine:init', () => {
 
     moduleStatusLabel(status) {
       const map = {
-        empty: 'Belum Ada Materi',
-        in_progress: 'Sedang Dipelajari',
-        needs_review: 'Perlu Review / Diulang',
+        empty: 'Belum dipelajari',
+        in_progress: 'Sedang dipelajari',
+        needs_review: 'Perlu review',
         mastered: 'Dikuasai',
         archived: 'Diarsipkan',
       };
@@ -1102,14 +1106,95 @@ document.addEventListener('alpine:init', () => {
     moduleStatusBadgeClass(status) {
       switch (status) {
         case 'mastered':
-          return 'chip chip--ok';
+          return 'state state--mastered';
         case 'in_progress':
-          return 'chip chip--cool';
+          return 'state state--progress';
         case 'needs_review':
-          return 'chip chip--person';
+          return 'state state--review';
         default:
-          return 'chip';
+          return 'state state--empty';
       }
+    },
+
+    // Proportional widths from real module counts. Returns zeros when nothing is registered.
+    statusSegments(counts) {
+      const c = counts || {};
+      const total = c.total || 0;
+      const pct = (n) => (total > 0 ? Math.round(((n || 0) / total) * 1000) / 10 : 0);
+      return {
+        total,
+        mastered: c.mastered || 0,
+        inProgress: c.in_progress || 0,
+        needsReview: c.needs_review || 0,
+        empty: c.empty || 0,
+        masteredPct: pct(c.mastered),
+        inProgressPct: pct(c.in_progress),
+        needsReviewPct: pct(c.needs_review),
+      };
+    },
+
+    scoreStateClass(score) {
+      if (typeof score !== 'number') return 'state state--empty';
+      return score >= 80 ? 'state state--ok' : 'state state--review';
+    },
+
+    get examEligibility() {
+      const verified = this.verifiedCourseModules.length;
+      return {
+        verified,
+        ready: verified >= 2,
+        missing: Math.max(0, 2 - verified),
+      };
+    },
+
+    get answeredPct() {
+      const total = this.activeQuestionSet?.questions?.length || 0;
+      return total > 0 ? Math.round((this.answeredCount / total) * 100) : 0;
+    },
+
+    get isBusy() {
+      return Boolean(
+        this.loadingCourses ||
+          this.loadingCourseDetail ||
+          this.loadingModuleDetail ||
+          this.submittingQuiz
+      );
+    },
+
+    viewTitle() {
+      switch (this.currentView) {
+        case 'course':
+          return this.activeCourse?.name;
+        case 'module':
+          return this.activeModule?.title;
+        case 'quiz_runner':
+          return this.activeQuestionSet?.title;
+        case 'attempt_review':
+          return this.activeAttemptReview?.questionSetTitle;
+        case 'system':
+          return 'Status sistem';
+        default:
+          return 'Perpustakaan kuliah';
+      }
+    },
+
+    focusViewTitle() {
+      const title = this.viewTitle();
+      document.title = title ? `${title} | UT AI Learning Companion` : 'UT AI Learning Companion';
+      this.$nextTick(() => {
+        const heading = document.querySelector(
+          `[data-view="${this.currentView}"] [data-view-title]`
+        );
+        if (heading) heading.focus({ preventScroll: true });
+        window.scrollTo({ top: 0 });
+      });
+    },
+
+    focusFirstField(selector) {
+      this.$nextTick(() => {
+        const el = document.querySelector(selector);
+        if (el) el.focus();
+      });
     },
 
     setTypeLabel(setType) {
