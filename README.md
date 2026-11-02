@@ -47,12 +47,12 @@ Aplikasi pendamping belajar mandiri untuk modul **Buku Materi Pokok (BMP) Univer
 
 ## Deploy ke Vercel
 
-Proyek ini telah dilengkapi konfigurasi Serverless Function (`api/index.js` dan `vercel.json`):
+Proyek ini telah dikonfigurasi untuk **Vercel Express Preset** (`src/server.js` dan `vercel.json`):
 
-1. Push folder `ut-learning` ke repositori GitHub Anda (atau atur **Root Directory** di Vercel ke `ut-learning`).
+1. Push repositori ini ke GitHub Anda.
 2. Di dashboard Vercel (**Settings → Environment Variables**), tambahkan variabel berikut:
    - `DATABASE_URL` (atau `DIRECT_URL`): Connection string Neon Postgres Anda.
    - `GEMINI_API_KEY`: API key dari Google AI Studio.
    - `GEMINI_MODEL`: `gemini-3.5-flash`
    - `GEMINI_THINKING_LEVEL`: `low`
-3. Klik **Deploy**. File statis di `public/` akan disajikan langsung oleh CDN Vercel dan seluruh endpoint `/api/*` dijalankan melalui `api/index.js`.
+3. Klik **Deploy**. File statis di `public/` akan disajikan oleh CDN Vercel dan seluruh endpoint Express dijalankan melalui `src/server.js`.

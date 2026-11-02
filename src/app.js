@@ -29,6 +29,10 @@ export function createApp({
   app.use(express.json({ limit: '2mb' }));
   app.use(express.static(publicDir));
 
+  app.get('/', (_req, res) => {
+    res.sendFile(path.join(publicDir, 'index.html'));
+  });
+
   app.get('/api/health', async (_req, res) => {
     const config = getEnvConfig();
     const dbHealth = await checkDatabaseHealth();

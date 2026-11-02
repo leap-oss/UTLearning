@@ -28,8 +28,6 @@ import {
 
 const uploadTmpDir = path.join(os.tmpdir(), 'ut-learning-uploads');
 
-fs.mkdirSync(uploadTmpDir, { recursive: true });
-
 const uuidSchema = z.string().uuid('Format ID tidak valid.');
 
 function formatZodError(zodErr) {
@@ -63,6 +61,11 @@ export function createLearningRouter({
   });
 
   const handleMultipartUpload = (req, res, next) => {
+    try {
+      fs.mkdirSync(uploadTmpDir, { recursive: true });
+    } catch {
+      // Ignore if already exists
+    }
     const middleware = upload.array('images', config.aiMaxImagesPerBatch);
     middleware(req, res, (err) => {
       if (!err) return next();
