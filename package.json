@@ -1,0 +1,27 @@
+{
+  "name": "ut-learning",
+  "version": "0.2.0",
+  "description": "UT AI Learning Companion — Personal continuous AI-assisted LMS",
+  "type": "module",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "node --watch src/server.js",
+    "test": "node --test test/*.test.js",
+    "db:generate": "drizzle-kit generate",
+    "db:migrate": "node src/db/migrate.js",
+    "db:seed:dev": "node src/db/seed-dev.js"
+  },
+  "dependencies": {
+    "@google/genai": "^2.32.0",
+    "dotenv": "^16.4.7",
+    "drizzle-orm": "^0.45.1",
+    "express": "^4.21.2",
+    "multer": "^2.5.0",
+    "pg": "^8.18.0",
+    "zod": "^4.3.6"
+  },
+  "devDependencies": {
+    "drizzle-kit": "^0.31.9"
+  }
+}

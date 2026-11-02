@@ -1,0 +1,1660 @@
+<!doctype html>
+<html lang="id">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>UT AI Learning Companion</title>
+    <meta
+      name="description"
+      content="Meja kerja belajar modul Buku Materi Pokok Universitas Terbuka dengan ekstraksi halaman terverifikasi, rangkuman materi, kuis latihan, dan remedial terfokus."
+    />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible+Mono:wght@400;500&family=Host+Grotesk:wght@400;500&display=swap"
+      rel="stylesheet"
+    />
+    <script>
+      window.tailwind = { config: { corePlugins: { preflight: false } } };
+    </script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="css/app.css" />
+    <script defer src="/js/app.js"></script>
+    <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.14.8/dist/cdn.min.js"></script>
+  </head>
+  <body>
+    <div x-data="appShell" x-cloak class="app-shell">
+      <!-- Top Bar -->
+      <header class="topbar">
+        <div class="brand-group">
+          <h1 class="wordmark">UT AI Learning Companion</h1>
+          <p class="brand-sub">
+            Ekstraksi modul BMP, rangkuman terverifikasi, kuis latihan, dan evaluasi kesiapan ujian.
+          </p>
+        </div>
+
+        <nav class="nav-bar" aria-label="Navigasi utama">
+          <button
+            type="button"
+            @click="backToDashboard()"
+            class="tab-btn"
+            :class="currentView !== 'system' ? 'is-active' : ''"
+          >
+            Perpustakaan Kuliah
+          </button>
+          <button
+            type="button"
+            @click="currentView = 'system'; refreshSystemStatus()"
+            class="tab-btn"
+            :class="currentView === 'system' ? 'is-active' : ''"
+          >
+            <span>Status Sistem</span>
+            <span
+              class="chip"
+              :class="health?.status === 'ok' && health?.database?.connected ? 'chip--ok' : 'chip--person'"
+              x-text="health?.status === 'ok' && health?.database?.connected ? 'Siap' : 'Periksa'"
+            ></span>
+          </button>
+        </nav>
+      </header>
+
+      <!-- Active AI Job Progress Banner -->
+      <template x-if="activeAiJob">
+        <div class="status-banner status-banner--job" role="status" aria-live="polite">
+          <div>
+            <p class="item-title" x-text="activeAiJob.label"></p>
+            <p class="prose-sub">
+              Status antrean:
+              <span class="measured" x-text="activeAiJob.status"></span>,
+              percobaan
+              <span class="measured" x-text="`${activeAiJob.attemptCount || 1}/${activeAiJob.maxAttempts || 3}`"></span>
+            </p>
+          </div>
+          <span class="chip chip--cool">Memproses…</span>
+        </div>
+      </template>
+
+      <!-- Feedback Banners -->
+      <template x-if="noticeMessage">
+        <div class="status-banner status-banner--ok" role="status" aria-live="polite">
+          <span x-text="noticeMessage"></span>
+          <button type="button" @click="noticeMessage = null" class="btn btn--quiet">Tutup</button>
+        </div>
+      </template>
+
+      <template x-if="errorMessage">
+        <div class="status-banner status-banner--bad" role="alert">
+          <span x-text="errorMessage"></span>
+          <button type="button" @click="errorMessage = null" class="btn btn--quiet">Tutup</button>
+        </div>
+      </template>
+
+      <!-- ==================== VIEW 1: DASHBOARD ==================== -->
+      <main x-show="currentView === 'dashboard'" class="view-stack">
+        <div class="row-between">
+          <div class="row-wrap">
+            <div>
+              <label for="semester-filter" class="visually-hidden">Filter semester</label>
+              <select id="semester-filter" x-model="selectedSemester" class="select">
+                <option value="ALL">Semua semester</option>
+                <template x-for="sem in semesterOptions" :key="sem">
+                  <option :value="sem" x-text="sem"></option>
+                </template>
+              </select>
+            </div>
+
+            <label class="checkbox-label">
+              <input
+                type="checkbox"
+                x-model="includeArchivedCourses"
+                @change="loadCourses()"
+              />
+              <span>Tampilkan mata kuliah diarsipkan</span>
+            </label>
+          </div>
+
+          <button type="button" @click="openCreateCourseModal()" class="btn btn--primary">
+            Tambah Mata Kuliah
+          </button>
+        </div>
+
+        <template x-if="loadingCourses">
+          <div class="panel-surface" role="status">
+            <p class="prose-sub">Memuat daftar mata kuliah dari basis data…</p>
+          </div>
+        </template>
+
+        <template x-if="!loadingCourses && coursesError">
+          <div class="panel-surface section-stack" role="alert">
+            <h2 class="section-title">Gagal memuat daftar mata kuliah</h2>
+            <p class="prose-sub" x-text="coursesError"></p>
+            <div>
+              <button type="button" @click="loadCourses()" class="btn">Coba Lagi</button>
+            </div>
+          </div>
+        </template>
+
+        <template x-if="!loadingCourses && !coursesError && filteredCourses.length === 0">
+          <div class="panel-surface section-stack">
+            <h2 class="section-title">Belum ada mata kuliah</h2>
+            <p class="prose-sub">
+              Tambahkan mata kuliah Universitas Terbuka Anda (contohnya kode
+              <span class="measured">MKWN4101</span> atau <span class="measured">MSIM4201</span>)
+              untuk mulai mengelola modul BMP.
+            </p>
+            <div>
+              <button type="button" @click="openCreateCourseModal()" class="btn btn--primary">
+                Buat Mata Kuliah
+              </button>
+            </div>
+          </div>
+        </template>
+
+        <div x-show="!loadingCourses && filteredCourses.length > 0" class="section-stack">
+          <template x-for="course in filteredCourses" :key="course.id">
+            <article class="panels">
+              <div class="row-between">
+                <div class="section-stack">
+                  <div class="row-wrap">
+                    <span class="chip chip--cool measured" x-text="course.code"></span>
+                    <template x-if="course.semesterLabel">
+                      <span class="chip" x-text="course.semesterLabel"></span>
+                    </template>
+                    <template x-if="course.status === 'archived'">
+                      <span class="chip chip--person">Diarsipkan</span>
+                    </template>
+                    <span class="prose-sub">
+                      Aktivitas terakhir:
+                      <span class="measured" x-text="formatDateTime(course.lastActivityAt)"></span>
+                    </span>
+                  </div>
+                  <h2 class="section-title" x-text="course.name"></h2>
+                </div>
+
+                <div class="row-wrap">
+                  <button type="button" @click="openEditCourseModal(course)" class="btn btn--quiet">
+                    Edit
+                  </button>
+                  <template x-if="course.status !== 'archived'">
+                    <button type="button" @click="confirmArchiveCourse(course)" class="btn btn--quiet">
+                      Arsipkan
+                    </button>
+                  </template>
+                  <template x-if="course.status === 'archived'">
+                    <button type="button" @click="restoreCourse(course)" class="btn btn--quiet">
+                      Pulihkan
+                    </button>
+                  </template>
+                  <button type="button" @click="openCourse(course.id)" class="btn">
+                    Buka Mata Kuliah
+                  </button>
+                </div>
+              </div>
+
+              <dl class="panels panels--cols-4">
+                <div>
+                  <dt class="label-muted">Modul terdaftar</dt>
+                  <dd class="reading">
+                    <span x-text="course.moduleCounts?.total ?? 0"></span>
+                    <span class="prose-sub" x-text="`dari ${course.expectedModuleCount || 9}`"></span>
+                  </dd>
+                </div>
+                <div>
+                  <dt class="label-muted">Sedang dipelajari</dt>
+                  <dd class="reading" x-text="course.moduleCounts?.in_progress ?? 0"></dd>
+                </div>
+                <div>
+                  <dt class="label-muted">Perlu review</dt>
+                  <dd class="reading" x-text="course.moduleCounts?.needs_review ?? 0"></dd>
+                </div>
+                <div>
+                  <dt class="label-muted">Dikuasai</dt>
+                  <dd class="reading" x-text="course.moduleCounts?.mastered ?? 0"></dd>
+                </div>
+              </dl>
+            </article>
+          </template>
+        </div>
+      </main>
+
+      <!-- ==================== VIEW 2: COURSE DETAIL, MODULES & EXAM SIMULATION ==================== -->
+      <main x-show="currentView === 'course' && activeCourse" class="view-stack">
+        <!-- Course Editorial Overview & Progress Masthead -->
+        <section class="panels" aria-label="Ringkasan mata kuliah dan progres belajar">
+          <div class="section-stack">
+            <div class="row-between">
+              <button type="button" @click="backToDashboard()" class="btn btn--quiet">
+                Kembali ke Daftar
+              </button>
+              <span class="prose-sub">
+                Aktivitas terakhir:
+                <span class="measured" x-text="formatDateTime(activeCourse?.lastActivityAt)"></span>
+              </span>
+            </div>
+
+            <div class="row-between">
+              <div class="section-stack">
+                <div class="row-wrap">
+                  <span class="chip chip--cool measured" x-text="activeCourse?.code"></span>
+                  <template x-if="activeCourse?.semesterLabel">
+                    <span class="chip" x-text="activeCourse?.semesterLabel"></span>
+                  </template>
+                  <template x-if="activeCourse?.status === 'archived'">
+                    <span class="chip chip--person">Diarsipkan</span>
+                  </template>
+                  <span class="prose-sub">
+                    Target kurikulum <span class="measured" x-text="courseOverviewMetrics.expected"></span> modul BMP
+                  </span>
+                </div>
+                <h2 class="page-title" x-text="activeCourse?.name"></h2>
+              </div>
+
+              <div class="row-wrap">
+                <button type="button" @click="openEditCourseModal(activeCourse)" class="btn">
+                  Edit Mata Kuliah
+                </button>
+                <button type="button" @click="openCreateModuleModal()" class="btn btn--primary">
+                  Tambah Modul
+                </button>
+              </div>
+            </div>
+
+            <!-- Proportional Module Status Bar (Real Data Only) -->
+            <div
+              class="progress-track"
+              role="img"
+              :aria-label="`Distribusi status dari ${courseOverviewMetrics.total} modul terdaftar`"
+            >
+              <div
+                class="progress-seg progress-seg--ok"
+                :style="`width: ${courseOverviewMetrics.masteredPct}%`"
+              ></div>
+              <div
+                class="progress-seg progress-seg--cool"
+                :style="`width: ${courseOverviewMetrics.inProgressPct}%`"
+              ></div>
+              <div
+                class="progress-seg progress-seg--warn"
+                :style="`width: ${courseOverviewMetrics.needsReviewPct}%`"
+              ></div>
+            </div>
+          </div>
+
+          <!-- 5-Column Hairline Telemetry Strip -->
+          <dl class="panels panels--cols-5">
+            <div class="section-stack">
+              <dt class="label-muted">Modul terdaftar</dt>
+              <dd class="reading">
+                <span x-text="courseOverviewMetrics.total"></span>
+                <span class="prose-sub" x-text="`dari ${courseOverviewMetrics.expected}`"></span>
+              </dd>
+              <dd class="prose-sub">
+                <span class="measured" x-text="courseOverviewMetrics.empty"></span> belum ada materi
+              </dd>
+            </div>
+
+            <div class="section-stack">
+              <dt class="label-muted">Study Pack siap</dt>
+              <dd class="reading" x-text="courseOverviewMetrics.verifiedPacks"></dd>
+              <dd class="prose-sub">
+                Rangkuman BMP terverifikasi
+              </dd>
+            </div>
+
+            <div class="section-stack">
+              <dt class="label-muted">Dikuasai</dt>
+              <dd class="reading" x-text="courseOverviewMetrics.mastered"></dd>
+              <dd class="prose-sub">
+                <span class="measured" x-text="courseOverviewMetrics.inProgress"></span> sedang dipelajari
+              </dd>
+            </div>
+
+            <div class="section-stack">
+              <dt class="label-muted">Perlu review</dt>
+              <dd class="reading" x-text="courseOverviewMetrics.needsReview"></dd>
+              <dd class="prose-sub">
+                Modul butuh penguatan konsep
+              </dd>
+            </div>
+
+            <div class="section-stack">
+              <dt class="label-muted">Evaluasi kuis</dt>
+              <dd
+                class="reading"
+                x-text="courseOverviewMetrics.avgScore != null ? `${courseOverviewMetrics.avgScore}%` : 'Belum ada'"
+              ></dd>
+              <dd class="prose-sub">
+                <span class="measured" x-text="courseOverviewMetrics.totalAttempts"></span> percobaan tercatat
+              </dd>
+            </div>
+          </dl>
+        </section>
+
+        <!-- Linear-Style Structured Module Curriculum Ledger -->
+        <section aria-labelledby="modules-heading" class="section-stack">
+          <div class="row-between">
+            <div>
+              <h3 id="modules-heading" class="section-title">
+                Kurikulum dan progres modul (<span class="measured" x-text="activeCourse?.modules?.length || 0"></span>)
+              </h3>
+              <p class="prose-sub">
+                Pilih modul mana saja untuk mengunggah halaman BMP, membaca Study Pack, atau mengerjakan latihan soal tanpa urutan terkunci.
+              </p>
+            </div>
+          </div>
+
+          <template x-if="!activeCourse?.modules || activeCourse.modules.length === 0">
+            <div class="panel-surface section-stack">
+              <p class="item-title">Belum ada modul pada mata kuliah ini</p>
+              <p class="prose-sub">
+                Tambahkan Modul 1, Modul 2, atau modul mana saja yang sedang ingin Anda pelajari.
+              </p>
+              <div>
+                <button type="button" @click="openCreateModuleModal()" class="btn btn--primary">
+                  Tambah Modul
+                </button>
+              </div>
+            </div>
+          </template>
+
+          <div x-show="activeCourse?.modules && activeCourse.modules.length > 0" class="module-ledger">
+            <div class="module-ledger-head" aria-hidden="true">
+              <span>Indeks</span>
+              <span>Judul modul dan status</span>
+              <span>Kesiapan materi dan hasil kuis</span>
+              <span>Tindakan</span>
+            </div>
+
+            <template x-for="mod in activeCourse?.modules" :key="mod.id">
+              <article class="module-row">
+                <div>
+                  <span class="chip chip--cool measured" x-text="`Modul ${mod.moduleNumber}`"></span>
+                </div>
+
+                <div class="module-cell-main">
+                  <div class="row-wrap">
+                    <h4 class="item-title" x-text="mod.title"></h4>
+                    <span :class="moduleStatusBadgeClass(mod.status)" x-text="moduleStatusLabel(mod.status)"></span>
+                  </div>
+                  <p class="prose-sub">
+                    Diperbarui <span class="measured" x-text="formatDateTime(mod.updatedAt)"></span>
+                  </p>
+                </div>
+
+                <div class="module-cell-meta">
+                  <template x-if="getModuleProgressItem(mod.id)?.hasVerifiedStudyPack">
+                    <span
+                      class="chip chip--cool measured"
+                      x-text="`Study Pack v${getModuleProgressItem(mod.id)?.latestStudyPackVersion || 1}`"
+                    ></span>
+                  </template>
+                  <template x-if="!getModuleProgressItem(mod.id)?.hasVerifiedStudyPack">
+                    <span class="chip">Belum ada Study Pack</span>
+                  </template>
+
+                  <template x-if="(getModuleProgressItem(mod.id)?.attemptCount || 0) > 0">
+                    <span
+                      class="chip measured"
+                      :class="(getModuleProgressItem(mod.id)?.latestScore || 0) >= 80 ? 'chip--ok' : 'chip--person'"
+                      x-text="`Skor ${getModuleProgressItem(mod.id)?.latestScore}% (${getModuleProgressItem(mod.id)?.attemptCount}x kuis)`"
+                    ></span>
+                  </template>
+                  <template x-if="!(getModuleProgressItem(mod.id)?.attemptCount > 0)">
+                    <span class="prose-sub">Belum ada kuis</span>
+                  </template>
+
+                  <template x-if="(getModuleProgressItem(mod.id)?.weakTopics?.length || 0) > 0">
+                    <span
+                      class="chip chip--person measured"
+                      x-text="`${getModuleProgressItem(mod.id)?.weakTopics?.length} topik lemah`"
+                    ></span>
+                  </template>
+                </div>
+
+                <div class="module-cell-actions">
+                  <button type="button" @click="openEditModuleModal(mod)" class="btn btn--quiet">
+                    Edit
+                  </button>
+                  <button type="button" @click="confirmArchiveModule(mod)" class="btn btn--quiet">
+                    Arsipkan
+                  </button>
+                  <button type="button" @click="openModule(mod.id)" class="btn">
+                    Buka Modul
+                  </button>
+                </div>
+              </article>
+            </template>
+          </div>
+        </section>
+
+        <!-- Elevated Comprehensive Exam Simulation Workbench -->
+        <section class="simulation-stage section-stack" aria-labelledby="exam-sim-heading">
+          <div class="row-between">
+            <div class="section-stack">
+              <div class="row-wrap">
+                <span
+                  class="chip"
+                  :class="verifiedCourseModules.length >= 2 ? 'chip--ok' : 'chip--person'"
+                  x-text="verifiedCourseModules.length >= 2 ? 'Siap dijalankan' : 'Menunggu prasyarat modul'"
+                ></span>
+                <span class="prose-sub">
+                  <span class="measured" x-text="verifiedCourseModules.length"></span> modul memiliki Study Pack terverifikasi (minimal <span class="measured">2</span> modul)
+                </span>
+              </div>
+              <h3 id="exam-sim-heading" class="section-title">
+                Simulasi ujian komprehensif lintas modul
+              </h3>
+              <p class="prose-sub">
+                Evaluasi penguasaan lintas modul menggunakan sintesis Study Pack yang telah Anda verifikasi. Simulasi ini dirancang sebagai pengukur kesiapan ujian mandiri, bukan prediksi soal resmi Universitas Terbuka.
+              </p>
+            </div>
+          </div>
+
+          <template x-if="verifiedCourseModules.length < 2">
+            <div class="status-banner status-banner--warn">
+              <span>
+                Selesaikan ekstraksi halaman BMP dan susun Study Pack pada minimal
+                <strong class="measured">2</strong> modul untuk membuka simulasi ujian lintas modul (saat ini baru
+                <span class="measured" x-text="verifiedCourseModules.length"></span> modul siap).
+              </span>
+            </div>
+          </template>
+
+          <div
+            x-show="verifiedCourseModules.length >= 2 || (courseProgress?.examSimulations?.length || 0) > 0"
+            class="simulation-grid"
+          >
+            <template x-if="verifiedCourseModules.length >= 2">
+              <div class="section-stack">
+                <div class="field-group">
+                  <span class="field-label">
+                    Pilih cakupan modul (<span class="measured" x-text="examSimForm.selectedModuleIds.length"></span> dipilih)
+                  </span>
+                  <div class="selectable-module-list">
+                    <template x-for="vm in verifiedCourseModules" :key="vm.moduleId">
+                      <label
+                        class="selectable-module"
+                        :class="examSimForm.selectedModuleIds.includes(vm.moduleId) ? 'is-selected' : ''"
+                      >
+                        <div class="row-wrap">
+                          <input
+                            type="checkbox"
+                            :checked="examSimForm.selectedModuleIds.includes(vm.moduleId)"
+                            @change="toggleExamSimModule(vm.moduleId)"
+                          />
+                          <span class="chip chip--cool measured" x-text="`Modul ${vm.moduleNumber}`"></span>
+                          <span class="item-title" x-text="vm.title"></span>
+                        </div>
+                        <span
+                          class="chip measured"
+                          x-text="`v${vm.latestStudyPackVersion || 1}`"
+                        ></span>
+                      </label>
+                    </template>
+                  </div>
+                </div>
+
+                <div class="grid-form-2">
+                  <div class="field-group">
+                    <label for="sim-question-count" class="field-label">Jumlah soal simulasi</label>
+                    <select id="sim-question-count" x-model="examSimForm.questionCount" class="select">
+                      <option value="6">6 soal</option>
+                      <option value="10">10 soal</option>
+                      <option value="15">15 soal</option>
+                      <option value="20">20 soal</option>
+                    </select>
+                  </div>
+
+                  <div class="field-group">
+                    <label for="sim-difficulty" class="field-label">Tingkat kesulitan</label>
+                    <select id="sim-difficulty" x-model="examSimForm.difficulty" class="select">
+                      <option value="mixed">Campuran seimbang</option>
+                      <option value="medium">Menengah</option>
+                      <option value="hard">Analitis</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div class="row-between">
+                  <span class="prose-sub">
+                    Minimal 2 modul harus dicentang untuk menyusun paket soal gabungan.
+                  </span>
+                  <button
+                    type="button"
+                    @click="generateExamSimulation()"
+                    :disabled="examSimForm.selectedModuleIds.length < 2 || Boolean(activeAiJob)"
+                    class="btn btn--primary"
+                  >
+                    Buat Simulasi
+                  </button>
+                </div>
+              </div>
+            </template>
+
+            <!-- Existing Exam Simulation Sets Ledger -->
+            <template x-if="courseProgress?.examSimulations && courseProgress.examSimulations.length > 0">
+              <div class="section-stack">
+                <h4 class="item-title">
+                  Riwayat paket simulasi (<span class="measured" x-text="courseProgress.examSimulations.length"></span>)
+                </h4>
+                <div class="ledger">
+                  <template x-for="sim in courseProgress.examSimulations" :key="sim.id">
+                    <div class="ledger-row ledger-row--block">
+                      <div class="row-between">
+                        <div class="section-stack">
+                          <p class="item-title" x-text="sim.title"></p>
+                          <div class="row-wrap">
+                            <template x-if="sim.metadata?.difficulty">
+                              <span class="chip" x-text="difficultyLabel(sim.metadata.difficulty)"></span>
+                            </template>
+                            <template x-for="inc in sim.metadata?.includedModules || []" :key="inc.moduleId">
+                              <span class="chip chip--cool measured" x-text="`M${inc.moduleNumber}`"></span>
+                            </template>
+                            <span class="prose-sub">
+                              Dibuat <span class="measured" x-text="formatDateTime(sim.createdAt)"></span>,
+                              <span class="measured" x-text="`${sim.attempts?.length || 0}`"></span> percobaan
+                            </span>
+                          </div>
+                        </div>
+
+                        <div class="row-wrap">
+                          <template x-if="sim.attempts && sim.attempts.length > 0">
+                            <button
+                              type="button"
+                              @click="openAttemptReview(sim.attempts[0].id)"
+                              class="btn"
+                            >
+                              <span>Laporan Terakhir</span>
+                              <span class="measured" x-text="`${sim.attempts[0].score}%`"></span>
+                            </button>
+                          </template>
+                          <button type="button" @click="startQuiz(sim.id)" class="btn btn--primary">
+                            Kerjakan Simulasi
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  </template>
+                </div>
+              </div>
+            </template>
+          </div>
+        </section>
+      </main>
+
+      <!-- ==================== VIEW 3: MODULE WORKSPACE ==================== -->
+      <main x-show="currentView === 'module' && activeModule" class="view-stack">
+        <!-- Module Header -->
+        <div class="panel-surface section-stack">
+          <div class="row-between">
+            <div class="section-stack">
+              <div>
+                <button type="button" @click="backToCourse()" class="btn btn--quiet">
+                  <span>Kembali ke</span>
+                  <span x-text="activeModule?.course?.name || 'Mata Kuliah'"></span>
+                </button>
+              </div>
+              <div class="row-wrap">
+                <span class="chip chip--cool measured" x-text="`Modul ${activeModule?.moduleNumber}`"></span>
+                <span
+                  :class="moduleStatusBadgeClass(activeModule?.status)"
+                  x-text="moduleStatusLabel(activeModule?.status)"
+                ></span>
+              </div>
+              <h2 class="page-title" x-text="activeModule?.title"></h2>
+            </div>
+          </div>
+
+          <!-- Module Sub-navigation Tabs -->
+          <div class="tab-strip" role="tablist" aria-label="Tahapan belajar modul">
+            <button
+              type="button"
+              @click="moduleTab = 'sources'"
+              class="tab-btn"
+              :class="moduleTab === 'sources' ? 'is-active' : ''"
+            >
+              <span>1. Sumber</span>
+              <span class="measured" x-text="`(${activeModule?.sources?.length || 0})`"></span>
+            </button>
+            <button
+              type="button"
+              @click="moduleTab = 'study'"
+              class="tab-btn"
+              :class="moduleTab === 'study' ? 'is-active' : ''"
+            >
+              <span>2. Rangkuman</span>
+              <span class="measured" x-text="`(${activeModule?.studyPacks?.length || 0})`"></span>
+            </button>
+            <button
+              type="button"
+              @click="moduleTab = 'quiz'"
+              class="tab-btn"
+              :class="moduleTab === 'quiz' ? 'is-active' : ''"
+            >
+              <span>3. Kuis</span>
+              <span class="measured" x-text="`(${activeModule?.questionSets?.length || 0})`"></span>
+            </button>
+            <button
+              type="button"
+              @click="moduleTab = 'progress'"
+              class="tab-btn"
+              :class="moduleTab === 'progress' ? 'is-active' : ''"
+            >
+              4. Riwayat
+            </button>
+          </div>
+        </div>
+
+        <!-- TAB 1: SOURCES & EXTRACTION REVIEW -->
+        <section x-show="moduleTab === 'sources'" class="view-stack">
+          <!-- Upload Panel -->
+          <div class="panel-surface section-stack">
+            <div class="row-between">
+              <div>
+                <h3 class="section-title">Unggah foto halaman BMP</h3>
+                <p class="prose-sub">
+                  Pilih foto halaman Rangkuman, Tes Formatif, atau Materi BMP (JPEG, PNG, WebP). Atur urutan halaman sebelum diekstrak sekaligus dalam satu permintaan.
+                </p>
+              </div>
+              <label class="btn btn--primary">
+                <span>Pilih Foto Halaman</span>
+                <input
+                  type="file"
+                  multiple
+                  accept="image/jpeg,image/png,image/webp"
+                  @change="handleFileSelect($event)"
+                  class="visually-hidden"
+                />
+              </label>
+            </div>
+
+            <!-- Staged Files Ledger -->
+            <template x-if="stagedFiles.length > 0">
+              <div class="section-stack">
+                <p class="label-muted">
+                  Siap diekstrak (<span class="measured" x-text="stagedFiles.length"></span> berkas)
+                </p>
+                <div class="ledger">
+                  <template x-for="(item, idx) in stagedFiles" :key="item.id">
+                    <div class="ledger-row">
+                      <div class="row-wrap">
+                        <span class="chip chip--cool measured" x-text="`#${idx + 1}`"></span>
+                        <span class="item-title" x-text="item.file.name"></span>
+                        <span class="prose-sub measured" x-text="formatBytes(item.file.size)"></span>
+                      </div>
+
+                      <div class="row-wrap">
+                        <label class="row-wrap">
+                          <span class="label-muted">Halaman</span>
+                          <input
+                            type="number"
+                            min="1"
+                            x-model="item.pageOrder"
+                            class="input measured"
+                            aria-label="Nomor urut halaman"
+                          />
+                        </label>
+
+                        <select x-model="item.label" class="select" aria-label="Jenis halaman sumber">
+                          <option value="rangkuman">Rangkuman</option>
+                          <option value="tes_formatif">Tes Formatif</option>
+                          <option value="materi">Materi</option>
+                        </select>
+
+                        <button
+                          type="button"
+                          @click="moveStagedFile(idx, -1)"
+                          :disabled="idx === 0"
+                          class="btn btn--quiet"
+                        >
+                          Naik
+                        </button>
+                        <button
+                          type="button"
+                          @click="moveStagedFile(idx, 1)"
+                          :disabled="idx === stagedFiles.length - 1"
+                          class="btn btn--quiet"
+                        >
+                          Turun
+                        </button>
+                        <button
+                          type="button"
+                          @click="removeStagedFile(idx)"
+                          class="btn btn--danger"
+                        >
+                          Hapus
+                        </button>
+                      </div>
+                    </div>
+                  </template>
+                </div>
+
+                <div class="row-between">
+                  <button type="button" @click="clearStagedFiles()" class="btn">
+                    Batal
+                  </button>
+                  <button
+                    type="button"
+                    @click="submitSourceExtraction()"
+                    :disabled="Boolean(activeAiJob)"
+                    class="btn btn--primary"
+                  >
+                    Ekstrak Halaman
+                  </button>
+                </div>
+              </div>
+            </template>
+          </div>
+
+          <!-- Extracted Sources Review List -->
+          <div class="section-stack">
+            <div class="row-between">
+              <div>
+                <h3 class="section-title">
+                  Hasil ekstraksi halaman (<span class="measured" x-text="activeModule?.sources?.length || 0"></span>)
+                </h3>
+                <p class="prose-sub">
+                  Periksa teks hasil bacaan AI. Setelah semua halaman terverifikasi, lanjutkan ke tab Rangkuman untuk menyusun Study Pack.
+                </p>
+              </div>
+              <template x-if="(activeModule?.sources?.length || 0) > 0 && unreviewedSourcesCount === 0">
+                <button type="button" @click="moduleTab = 'study'" class="btn btn--primary">
+                  Lanjut ke Rangkuman
+                </button>
+              </template>
+            </div>
+
+            <template x-if="!activeModule?.sources || activeModule.sources.length === 0">
+              <div class="panel-surface">
+                <p class="prose-sub">Belum ada sumber halaman BMP pada modul ini.</p>
+              </div>
+            </template>
+
+            <div class="section-stack">
+              <template x-for="src in activeModule?.sources" :key="src.id">
+                <article class="panel-surface section-stack">
+                  <div class="row-between">
+                    <div class="row-wrap">
+                      <span class="chip chip--cool measured" x-text="`Hal. ${src.pageOrder}`"></span>
+                      <span class="chip" x-text="src.label"></span>
+                      <span class="item-title" x-text="src.fileName"></span>
+                      <span
+                        class="chip"
+                        :class="src.needsReview ? 'chip--person' : 'chip--ok'"
+                        x-text="src.needsReview ? 'Perlu review' : 'Terverifikasi'"
+                      ></span>
+                    </div>
+
+                    <div class="row-wrap">
+                      <template x-if="src.needsReview && editingSourceId !== src.id">
+                        <button
+                          type="button"
+                          @click="quickApproveSource(src)"
+                          class="btn btn--primary"
+                        >
+                          Verifikasi Halaman
+                        </button>
+                      </template>
+                      <button
+                        type="button"
+                        @click="editingSourceId === src.id ? (editingSourceId = null) : startEditSource(src)"
+                        class="btn"
+                        x-text="editingSourceId === src.id ? 'Tutup Editor' : 'Koreksi Teks'"
+                      ></button>
+                      <button
+                        type="button"
+                        @click="removeSourceAsset(src)"
+                        class="btn btn--danger"
+                      >
+                        Hapus
+                      </button>
+                    </div>
+                  </div>
+
+                  <!-- Ambiguous warnings if any -->
+                  <template x-if="src.extractedContentJson?.ambiguousParts?.length > 0">
+                    <div class="spine-block spine-block--amber section-stack">
+                      <p class="label-muted">Bagian yang ditandai ambigu dan perlu diperiksa:</p>
+                      <ul>
+                        <template x-for="(amb, aIdx) in src.extractedContentJson.ambiguousParts" :key="aIdx">
+                          <li class="prose-sub" x-text="amb"></li>
+                        </template>
+                      </ul>
+                    </div>
+                  </template>
+
+                  <!-- Read-only extracted content preview -->
+                  <div x-show="editingSourceId !== src.id" class="section-stack">
+                    <p
+                      x-show="src.extractedContentJson?.pageTitle"
+                      class="item-title"
+                      x-text="src.extractedContentJson?.pageTitle"
+                    ></p>
+                    <div class="well">
+                      <pre
+                        class="ocr-pre"
+                        x-text="src.extractedContentJson?.extractedText || '(Belum ada teks hasil ekstraksi)'"
+                      ></pre>
+                    </div>
+                  </div>
+
+                  <!-- Inline Editor for Extraction Review -->
+                  <div x-show="editingSourceId === src.id" class="section-stack">
+                    <div class="grid-form-3">
+                      <div class="field-group">
+                        <label class="field-label">Urutan halaman</label>
+                        <input
+                          type="number"
+                          min="1"
+                          x-model="sourceEditForm.pageOrder"
+                          class="input measured"
+                        />
+                      </div>
+                      <div class="field-group">
+                        <label class="field-label">Jenis sumber</label>
+                        <select x-model="sourceEditForm.label" class="select">
+                          <option value="rangkuman">Rangkuman</option>
+                          <option value="tes_formatif">Tes Formatif</option>
+                          <option value="materi">Materi</option>
+                        </select>
+                      </div>
+                      <div class="field-group">
+                        <label class="field-label">Judul halaman</label>
+                        <input
+                          type="text"
+                          x-model="sourceEditForm.pageTitle"
+                          class="input"
+                        />
+                      </div>
+                    </div>
+
+                    <div class="field-group">
+                      <label class="field-label">Teks hasil ekstraksi</label>
+                      <textarea
+                        rows="8"
+                        x-model="sourceEditForm.extractedText"
+                        class="textarea"
+                      ></textarea>
+                    </div>
+
+                    <div class="row-between">
+                      <button type="button" @click="editingSourceId = null" class="btn">
+                        Batal
+                      </button>
+                      <button
+                        type="button"
+                        @click="saveSourceReview(src.id, true)"
+                        :disabled="savingSourceEdit"
+                        class="btn btn--primary"
+                        x-text="savingSourceEdit ? 'Menyimpan…' : 'Simpan dan Verifikasi'"
+                      ></button>
+                    </div>
+                  </div>
+                </article>
+              </template>
+            </div>
+          </div>
+        </section>
+
+        <!-- TAB 2: STUDY PACK VIEW -->
+        <section x-show="moduleTab === 'study'" class="view-stack">
+          <div class="panel-surface row-between">
+            <div>
+              <h3 class="section-title">Study Pack dan kuis awal</h3>
+              <p class="prose-sub">
+                Menyusun intisari BMP per topik, daftar istilah, penjelasan pendamping AI terpisah, serta kuis awal dalam satu permintaan. Membaca ulang materi ini tidak memanggil kuota AI.
+              </p>
+            </div>
+
+            <div class="row-wrap">
+              <label for="synthesis-q-count" class="label-muted">Soal awal</label>
+              <select id="synthesis-q-count" x-model="synthesisQuestionCount" class="select">
+                <option value="5">5 soal</option>
+                <option value="8">8 soal</option>
+                <option value="10">10 soal</option>
+              </select>
+
+              <template x-if="!activeStudyPack">
+                <button
+                  type="button"
+                  @click="generateStudyPackAndQuiz(false)"
+                  :disabled="Boolean(activeAiJob) || unreviewedSourcesCount > 0"
+                  class="btn btn--primary"
+                >
+                  Susun Study Pack
+                </button>
+              </template>
+
+              <template x-if="activeStudyPack">
+                <button
+                  type="button"
+                  @click="generateStudyPackAndQuiz(true)"
+                  :disabled="Boolean(activeAiJob) || unreviewedSourcesCount > 0"
+                  class="btn"
+                >
+                  Susun Versi Baru
+                </button>
+              </template>
+            </div>
+          </div>
+
+          <template x-if="unreviewedSourcesCount > 0">
+            <div class="status-banner status-banner--warn">
+              <span>
+                Masih ada <strong class="measured" x-text="unreviewedSourcesCount"></strong> halaman sumber yang belum diverifikasi. Periksa di tab Sumber terlebih dahulu.
+              </span>
+            </div>
+          </template>
+
+          <template x-if="activeStudyPack">
+            <div class="view-stack">
+              <!-- Version Switcher -->
+              <div class="row-between">
+                <div class="row-wrap">
+                  <label for="study-pack-version" class="label-muted">Versi rangkuman</label>
+                  <select id="study-pack-version" x-model="selectedStudyPackVersion" class="select">
+                    <template x-for="sp in activeModule?.studyPacks" :key="sp.id">
+                      <option :value="sp.version" x-text="`Versi v${sp.version}: ${sp.title}`"></option>
+                    </template>
+                  </select>
+                </div>
+                <button type="button" @click="moduleTab = 'quiz'" class="btn btn--primary">
+                  Mulai Latihan Kuis
+                </button>
+              </div>
+
+              <!-- Overview -->
+              <article class="panel-surface section-stack">
+                <h4 class="section-title" x-text="activeStudyPack.title"></h4>
+                <p class="prose-body" x-text="activeStudyPack.summaryJson?.overview"></p>
+              </article>
+
+              <!-- Topics Map (BMP Source vs AI Explanation separated by Console spines) -->
+              <div class="section-stack">
+                <h4 class="section-title">Peta konsep dan subtopik</h4>
+                <template x-for="(topic, tIdx) in activeStudyPack.summaryJson?.topics || []" :key="tIdx">
+                  <article class="panels">
+                    <div class="section-stack">
+                      <div class="row-between">
+                        <h5 class="item-title" x-text="topic.topicLabel"></h5>
+                        <div class="row-wrap">
+                          <template x-for="(ref, rIdx) in topic.sourceRefs || []" :key="rIdx">
+                            <span class="chip chip--cool measured" x-text="ref"></span>
+                          </template>
+                        </div>
+                      </div>
+
+                      <div class="spine-block spine-block--cool section-stack">
+                        <p class="label-muted">Sumber BMP (intisari materi)</p>
+                        <p class="prose-body" x-text="topic.bmpSummary"></p>
+                      </div>
+
+                      <template x-if="topic.aiExplanation">
+                        <div class="spine-block spine-block--amber section-stack">
+                          <p class="label-muted">Penjelasan pendamping AI (bukan kutipan langsung BMP)</p>
+                          <p class="prose-body" x-text="topic.aiExplanation"></p>
+                        </div>
+                      </template>
+
+                      <template x-if="topic.keyTakeaways && topic.keyTakeaways.length > 0">
+                        <div class="section-stack">
+                          <p class="label-muted">Poin kunci</p>
+                          <ul>
+                            <template x-for="(pt, pIdx) in topic.keyTakeaways" :key="pIdx">
+                              <li class="prose-sub" x-text="pt"></li>
+                            </template>
+                          </ul>
+                        </div>
+                      </template>
+                    </div>
+                  </article>
+                </template>
+              </div>
+
+              <!-- Glossary -->
+              <template x-if="activeStudyPack.summaryJson?.glossary?.length > 0">
+                <section class="section-stack">
+                  <h4 class="section-title">Istilah penting BMP dan definisi</h4>
+                  <div class="panels panels--cols-2">
+                    <template x-for="(g, gIdx) in activeStudyPack.summaryJson.glossary" :key="gIdx">
+                      <div class="section-stack">
+                        <h5 class="item-title" x-text="g.term"></h5>
+                        <p class="prose-sub">
+                          <strong class="label-muted">Definisi BMP:</strong>
+                          <span x-text="g.bmpDefinition"></span>
+                        </p>
+                        <p x-show="g.simpleAnalogy" class="prose-sub">
+                          <strong class="label-muted">Analogi pendamping AI:</strong>
+                          <span x-text="g.simpleAnalogy"></span>
+                        </p>
+                      </div>
+                    </template>
+                  </div>
+                </section>
+              </template>
+            </div>
+          </template>
+        </section>
+
+        <!-- TAB 3: QUESTION SETS & REMEDIAL -->
+        <section x-show="moduleTab === 'quiz'" class="view-stack">
+          <div class="panel-surface row-between">
+            <div>
+              <h3 class="section-title">Daftar kuis dan remedial modul</h3>
+              <p class="prose-sub">
+                Kunci jawaban disembunyikan selama pengerjaan dan dinilai secara lokal di server saat Anda mengumpulkan jawaban.
+              </p>
+            </div>
+
+            <template x-if="(activeModule?.studyPacks?.length || 0) > 0">
+              <button
+                type="button"
+                @click="generateExtraPracticeSet()"
+                :disabled="Boolean(activeAiJob)"
+                class="btn"
+              >
+                Tambah Latihan Soal
+              </button>
+            </template>
+          </div>
+
+          <template x-if="!activeModule?.questionSets || activeModule.questionSets.length === 0">
+            <div class="panel-surface">
+              <p class="prose-sub">
+                Belum ada paket kuis pada modul ini. Susun Study Pack di tab Rangkuman untuk otomatis membuat kuis latihan awal.
+              </p>
+            </div>
+          </template>
+
+          <div class="ledger">
+            <template x-for="qs in activeModule?.questionSets || []" :key="qs.id">
+              <div class="ledger-row">
+                <div class="section-stack">
+                  <div class="row-wrap">
+                    <span class="chip chip--cool" x-text="setTypeLabel(qs.setType)"></span>
+                    <span class="prose-sub measured" x-text="formatDateTime(qs.createdAt)"></span>
+                  </div>
+                  <h4 class="item-title" x-text="qs.title"></h4>
+
+                  <template x-if="qs.metadataJson?.diagnosticFeedback?.overallDiagnosis">
+                    <p
+                      class="prose-sub spine-block spine-block--amber"
+                      x-text="`Fokus diagnostik: ${qs.metadataJson.diagnosticFeedback.overallDiagnosis}`"
+                    ></p>
+                  </template>
+                </div>
+
+                <button type="button" @click="startQuiz(qs.id)" class="btn btn--primary">
+                  Kerjakan Kuis
+                </button>
+              </div>
+            </template>
+          </div>
+        </section>
+
+        <!-- TAB 4: MODULE PROGRESS & ATTEMPT HISTORY -->
+        <section x-show="moduleTab === 'progress'" class="view-stack">
+          <dl class="panels panels--cols-3">
+            <div>
+              <dt class="label-muted">Total percobaan kuis</dt>
+              <dd class="reading" x-text="moduleProgress?.attemptCount ?? 0"></dd>
+            </div>
+            <div>
+              <dt class="label-muted">Skor terakhir</dt>
+              <dd
+                class="reading"
+                x-text="moduleProgress?.latestScore != null ? `${moduleProgress.latestScore}%` : 'Belum ada'"
+              ></dd>
+            </div>
+            <div>
+              <dt class="label-muted">Rata-rata skor</dt>
+              <dd
+                class="reading"
+                x-text="moduleProgress?.averageScore != null ? `${moduleProgress.averageScore}%` : 'Belum ada'"
+              ></dd>
+            </div>
+          </dl>
+
+          <!-- Topic Mastery Breakdown -->
+          <div class="panel-surface section-stack">
+            <h4 class="section-title">Penguasaan per topik</h4>
+            <template x-if="!moduleProgress?.topicProgress || moduleProgress.topicProgress.length === 0">
+              <p class="prose-sub">Kerjakan minimal satu kuis untuk melihat rincian penguasaan topik.</p>
+            </template>
+
+            <div x-show="moduleProgress?.topicProgress && moduleProgress.topicProgress.length > 0" class="ledger">
+              <template x-for="tp in moduleProgress?.topicProgress || []" :key="tp.topicLabel">
+                <div class="ledger-row">
+                  <div class="row-wrap">
+                    <span class="item-title" x-text="tp.topicLabel"></span>
+                    <span class="prose-sub measured" x-text="`${tp.correctCount}/${tp.answeredCount} benar`"></span>
+                  </div>
+                  <span
+                    class="chip measured"
+                    :class="tp.accuracyPercent >= 75 ? 'chip--ok' : 'chip--person'"
+                    x-text="`${tp.accuracyPercent}%`"
+                  ></span>
+                </div>
+              </template>
+            </div>
+          </div>
+
+          <!-- Attempt History -->
+          <div class="panel-surface section-stack">
+            <h4 class="section-title">Riwayat pengerjaan kuis</h4>
+            <template x-if="!moduleProgress?.attempts || moduleProgress.attempts.length === 0">
+              <p class="prose-sub">Belum ada riwayat pengerjaan kuis.</p>
+            </template>
+
+            <div x-show="moduleProgress?.attempts && moduleProgress.attempts.length > 0" class="ledger">
+              <template x-for="att in moduleProgress?.attempts || []" :key="att.id">
+                <div class="ledger-row">
+                  <div>
+                    <p class="item-title" x-text="att.questionSetTitle"></p>
+                    <p class="prose-sub measured" x-text="formatDateTime(att.submittedAt)"></p>
+                  </div>
+                  <div class="row-wrap">
+                    <span
+                      class="chip measured"
+                      :class="att.score >= 80 ? 'chip--ok' : 'chip--person'"
+                      x-text="`${att.score}% (${att.correctCount}/${att.totalCount})`"
+                    ></span>
+                    <button type="button" @click="openAttemptReview(att.id)" class="btn">
+                      Lihat Pembahasan
+                    </button>
+                  </div>
+                </div>
+              </template>
+            </div>
+          </div>
+        </section>
+      </main>
+
+      <!-- ==================== VIEW 4: QUIZ RUNNER ==================== -->
+      <main x-show="currentView === 'quiz_runner' && activeQuestionSet" class="view-stack">
+        <div class="panel-surface row-between">
+          <div class="section-stack">
+            <div>
+              <button type="button" @click="returnFromQuizOrReview()" class="btn btn--quiet">
+                Keluar dari Kuis
+              </button>
+            </div>
+            <h2 class="page-title" x-text="activeQuestionSet?.title"></h2>
+          </div>
+          <div class="row-wrap">
+            <span class="label-muted">Terjawab</span>
+            <span class="reading" x-text="`${answeredCount}/${activeQuestionSet?.questions?.length || 0}`"></span>
+          </div>
+        </div>
+
+        <!-- Show diagnostic feedback banner if this is a remedial quiz -->
+        <template x-if="activeQuestionSet?.metadata?.diagnosticFeedback">
+          <div class="panel-surface section-stack">
+            <h3 class="section-title">Panduan remedial dan diagnostik konsep</h3>
+            <p class="prose-body" x-text="activeQuestionSet.metadata.diagnosticFeedback.overallDiagnosis"></p>
+            <div class="panels panels--cols-2">
+              <template x-for="(td, tdIdx) in activeQuestionSet.metadata.diagnosticFeedback.topicDiagnostics || []" :key="tdIdx">
+                <div class="section-stack">
+                  <p class="item-title" x-text="td.topicLabel"></p>
+                  <p class="prose-sub" x-text="td.misconceptionAnalysis"></p>
+                  <p class="prose-sub spine-block spine-block--amber" x-text="`Saran belajar: ${td.reviewGuidance}`"></p>
+                </div>
+              </template>
+            </div>
+          </div>
+        </template>
+
+        <!-- Questions List -->
+        <div class="section-stack">
+          <template x-for="(q, qIdx) in activeQuestionSet?.questions || []" :key="q.id">
+            <article class="panel-surface section-stack">
+              <div class="row-between">
+                <span class="chip chip--cool measured" x-text="`Soal ${qIdx + 1}`"></span>
+                <span class="chip" x-text="q.topicLabel"></span>
+              </div>
+              <p class="prose-body" x-text="q.prompt"></p>
+
+              <div class="option-list">
+                <template x-for="opt in q.options || []" :key="opt.key">
+                  <label
+                    class="option-row"
+                    :class="quizSelections[q.id] === opt.key ? 'is-selected' : ''"
+                  >
+                    <input
+                      type="radio"
+                      :name="`q-${q.id}`"
+                      :value="opt.key"
+                      x-model="quizSelections[q.id]"
+                    />
+                    <div>
+                      <span class="measured" x-text="`${opt.key}.`"></span>
+                      <span x-text="opt.text"></span>
+                    </div>
+                  </label>
+                </template>
+              </div>
+            </article>
+          </template>
+        </div>
+
+        <div class="row-between">
+          <p class="prose-sub">
+            Pastikan seluruh soal telah dipilih sebelum mengumpulkan jawaban.
+          </p>
+          <button
+            type="button"
+            @click="submitQuizAnswers()"
+            :disabled="submittingQuiz"
+            class="btn btn--primary"
+            x-text="submittingQuiz ? 'Menilai jawaban…' : 'Kumpulkan Jawaban'"
+          ></button>
+        </div>
+      </main>
+
+      <!-- ==================== VIEW 5: ATTEMPT RESULT & DIAGNOSTIC REVIEW ==================== -->
+      <main x-show="currentView === 'attempt_review' && activeAttemptReview" class="view-stack">
+        <div class="panels">
+          <div class="row-between">
+            <div class="section-stack">
+              <div>
+                <button type="button" @click="returnFromQuizOrReview()" class="btn btn--quiet">
+                  Kembali
+                </button>
+              </div>
+              <h2 class="page-title" x-text="activeAttemptReview?.questionSetTitle"></h2>
+              <p class="prose-sub">
+                Dikumpulkan pada <span class="measured" x-text="formatDateTime(activeAttemptReview?.submittedAt)"></span>
+              </p>
+            </div>
+
+            <div class="row-wrap">
+              <div>
+                <div class="label-muted">Skor akhir</div>
+                <div class="reading" x-text="`${activeAttemptReview?.score ?? 0}%`"></div>
+                <div class="prose-sub measured">
+                  <span x-text="activeAttemptReview?.correctCount"></span> dari
+                  <span x-text="activeAttemptReview?.totalCount"></span> benar
+                </div>
+              </div>
+
+              <template x-if="(activeAttemptReview?.score || 0) < 100">
+                <button
+                  type="button"
+                  @click="generateRemedialFromAttempt(activeAttemptReview.attemptId)"
+                  :disabled="Boolean(activeAiJob)"
+                  class="btn btn--primary"
+                >
+                  Susun Remedial
+                </button>
+              </template>
+            </div>
+          </div>
+        </div>
+
+        <!-- Module Breakdown (for Exam Simulations) -->
+        <template x-if="activeAttemptReview?.moduleBreakdown && activeAttemptReview.moduleBreakdown.length > 1">
+          <div class="panel-surface section-stack">
+            <h3 class="section-title">Rincian skor per modul</h3>
+            <div class="ledger">
+              <template x-for="mb in activeAttemptReview.moduleBreakdown" :key="mb.moduleId">
+                <div class="ledger-row">
+                  <div class="row-wrap">
+                    <span class="chip chip--cool measured" x-text="`Modul ${mb.moduleNumber}`"></span>
+                    <span class="item-title" x-text="mb.moduleTitle"></span>
+                  </div>
+                  <span
+                    class="chip measured"
+                    :class="mb.score >= 80 ? 'chip--ok' : 'chip--person'"
+                    x-text="`${mb.score}% (${mb.correct}/${mb.total})`"
+                  ></span>
+                </div>
+              </template>
+            </div>
+          </div>
+        </template>
+
+        <!-- Per-Question Review & Explanation -->
+        <div class="section-stack">
+          <h3 class="section-title">Pembahasan per soal</h3>
+          <template x-for="(rq, rIdx) in activeAttemptReview?.questions || []" :key="rq.questionId">
+            <article class="panels">
+              <div class="section-stack">
+                <div class="row-between">
+                  <div class="row-wrap">
+                    <span class="chip chip--cool measured" x-text="`Soal ${rIdx + 1}`"></span>
+                    <span class="chip" x-text="rq.topicLabel"></span>
+                  </div>
+                  <span
+                    class="chip"
+                    :class="rq.isCorrect ? 'chip--ok' : 'chip--bad'"
+                    x-text="rq.isCorrect ? 'Benar' : 'Kurang tepat'"
+                  ></span>
+                </div>
+
+                <p class="prose-body" x-text="rq.prompt"></p>
+
+                <div class="panels panels--cols-2">
+                  <div :class="rq.isCorrect ? 'row--plus' : 'row--minus'">
+                    <span class="label-muted">Jawaban Anda: </span>
+                    <span class="measured" x-text="rq.selectedOption"></span>
+                  </div>
+                  <div class="row--plus">
+                    <span class="label-muted">Kunci jawaban: </span>
+                    <span class="measured" x-text="rq.correctOption"></span>
+                  </div>
+                </div>
+
+                <div class="spine-block spine-block--cool section-stack">
+                  <p class="prose-body">
+                    <strong class="label-muted">Pembahasan: </strong>
+                    <span x-text="rq.explanation"></span>
+                  </p>
+                  <div class="row-wrap">
+                    <template x-for="(ref, rfIdx) in rq.sourceRefs || []" :key="rfIdx">
+                      <span class="chip chip--cool measured" x-text="`Sumber: ${ref}`"></span>
+                    </template>
+                  </div>
+                </div>
+              </div>
+            </article>
+          </template>
+        </div>
+      </main>
+
+      <!-- ==================== VIEW 6: SYSTEM & AI QUOTA ==================== -->
+      <main x-show="currentView === 'system'" class="view-stack">
+        <section aria-labelledby="health-heading" class="section-stack">
+          <div class="row-between">
+            <h2 id="health-heading" class="section-title">Status sistem dan konfigurasi</h2>
+            <button
+              type="button"
+              @click="refreshSystemStatus()"
+              :disabled="loadingHealth"
+              class="btn"
+              x-text="loadingHealth ? 'Memeriksa…' : 'Segarkan Status'"
+            ></button>
+          </div>
+
+          <div class="panels panels--cols-3">
+            <div class="section-stack">
+              <div class="row-between">
+                <span class="label-muted">Express dan antrean AI</span>
+                <span
+                  class="chip"
+                  :class="health?.status === 'ok' ? 'chip--ok' : ''"
+                  x-text="health?.status === 'ok' ? 'Aktif' : 'Memuat'"
+                ></span>
+              </div>
+              <p class="reading" x-text="health?.server?.nodeVersion || 'Tidak diketahui'"></p>
+              <p class="prose-sub">
+                Antrean:
+                <span
+                  class="measured"
+                  x-text="health?.ai?.queue ? `${health.ai.queue.activeCount} berjalan, ${health.ai.queue.queuedCount} antre` : '0'"
+                ></span>
+              </p>
+            </div>
+
+            <div class="section-stack">
+              <div class="row-between">
+                <span class="label-muted">Neon Postgres</span>
+                <span
+                  class="chip"
+                  :class="health?.database?.connected ? 'chip--ok' : 'chip--person'"
+                  x-text="health?.database?.connected ? 'Terhubung' : 'Terputus'"
+                ></span>
+              </div>
+              <p
+                class="reading"
+                x-text="health?.database?.latencyMs != null ? `${health.database.latencyMs} ms` : ' Siap'"
+              ></p>
+              <p
+                class="prose-sub"
+                x-text="health?.database?.connected ? 'Koneksi pool aktif' : (health?.database?.status || 'Belum terhubung')"
+              ></p>
+            </div>
+
+            <div class="section-stack">
+              <div class="row-between">
+                <span class="label-muted">Gemini API</span>
+                <span
+                  class="chip"
+                  :class="health?.ai?.apiKeyConfigured ? 'chip--ok' : 'chip--person'"
+                  x-text="health?.ai?.apiKeyConfigured ? 'Kunci siap' : 'Belum diatur'"
+                ></span>
+              </div>
+              <p class="item-title measured" x-text="health?.ai?.model || 'GEMINI_MODEL belum diatur'"></p>
+              <p class="prose-sub">
+                Penalaran <span class="measured" x-text="health?.ai?.thinkingLevel || 'low'"></span>,
+                pencarian web <span class="measured" x-text="health?.ai?.googleSearchEnabled ? 'aktif' : 'nonaktif'"></span>
+              </p>
+            </div>
+          </div>
+        </section>
+
+        <section x-show="usageSummary" class="panel-surface section-stack">
+          <div class="row-between">
+            <div>
+              <h3 class="section-title">Catatan penggunaan AI aplikasi</h3>
+              <p class="prose-sub">
+                <span x-text="usageSummary?.disclaimer"></span>
+                <a
+                  :href="usageSummary?.aiStudioRateLimitUrl || 'https://aistudio.google.com/rate-limit'"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  Buka Google AI Studio Rate Limit
+                </a>
+              </p>
+            </div>
+          </div>
+
+          <dl class="panels panels--cols-4">
+            <div>
+              <dt class="label-muted">Permintaan hari ini (UTC)</dt>
+              <dd class="reading" x-text="usageSummary?.todayUtc?.requestCount ?? 0"></dd>
+              <dd class="prose-sub measured">
+                <span x-text="usageSummary?.todayUtc?.succeededCount ?? 0"></span> berhasil,
+                <span x-text="usageSummary?.todayUtc?.failedCount ?? 0"></span> gagal
+              </dd>
+            </div>
+            <div>
+              <dt class="label-muted">Token hari ini (UTC)</dt>
+              <dd class="reading" x-text="usageSummary?.todayUtc?.totalTokens ?? 0"></dd>
+            </div>
+            <div>
+              <dt class="label-muted">Total permintaan tercatat</dt>
+              <dd class="reading" x-text="usageSummary?.allTime?.requestCount ?? 0"></dd>
+            </div>
+            <div>
+              <dt class="label-muted">Total token penalaran</dt>
+              <dd class="reading" x-text="usageSummary?.allTime?.thinkingTokens ?? 0"></dd>
+            </div>
+          </dl>
+        </section>
+      </main>
+
+      <!-- ==================== MODAL: CREATE / EDIT COURSE ==================== -->
+      <div
+        x-show="showCourseModal"
+        class="modal-backdrop"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="course-modal-title"
+        @keydown.escape.window="showCourseModal = false"
+      >
+        <div class="modal-panel section-stack">
+          <h3
+            id="course-modal-title"
+            class="section-title"
+            x-text="editingCourseId ? 'Edit mata kuliah' : 'Tambah mata kuliah baru'"
+          ></h3>
+
+          <form @submit.prevent="submitCourseForm()" class="section-stack">
+            <div class="field-group">
+              <label for="course-code-input" class="field-label">Kode mata kuliah</label>
+              <input
+                id="course-code-input"
+                type="text"
+                required
+                maxlength="32"
+                placeholder="Contoh: MKWN4101"
+                x-model="courseForm.code"
+                class="input measured"
+              />
+            </div>
+
+            <div class="field-group">
+              <label for="course-name-input" class="field-label">Nama mata kuliah</label>
+              <input
+                id="course-name-input"
+                type="text"
+                required
+                maxlength="255"
+                placeholder="Contoh: Pendidikan Agama Islam"
+                x-model="courseForm.name"
+                class="input"
+              />
+            </div>
+
+            <div class="grid-form-2">
+              <div class="field-group">
+                <label for="course-sem-input" class="field-label">Semester atau label (opsional)</label>
+                <input
+                  id="course-sem-input"
+                  type="text"
+                  maxlength="64"
+                  placeholder="Contoh: Semester 1"
+                  x-model="courseForm.semesterLabel"
+                  class="input"
+                />
+              </div>
+
+              <div class="field-group">
+                <label for="course-modcount-input" class="field-label">Perkiraan jumlah modul</label>
+                <input
+                  id="course-modcount-input"
+                  type="number"
+                  min="1"
+                  max="50"
+                  required
+                  x-model="courseForm.expectedModuleCount"
+                  class="input measured"
+                />
+              </div>
+            </div>
+
+            <div class="row-between">
+              <button type="button" @click="showCourseModal = false" class="btn">
+                Batal
+              </button>
+              <button
+                type="submit"
+                :disabled="savingCourse"
+                class="btn btn--primary"
+                x-text="savingCourse ? 'Menyimpan…' : 'Simpan Mata Kuliah'"
+              ></button>
+            </div>
+          </form>
+        </div>
+      </div>
+
+      <!-- ==================== MODAL: CREATE / EDIT MODULE ==================== -->
+      <div
+        x-show="showModuleModal"
+        class="modal-backdrop"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="module-modal-title"
+        @keydown.escape.window="showModuleModal = false"
+      >
+        <div class="modal-panel section-stack">
+          <h3
+            id="module-modal-title"
+            class="section-title"
+            x-text="editingModuleId ? 'Edit modul' : 'Tambah modul'"
+          ></h3>
+
+          <form @submit.prevent="submitModuleForm()" class="section-stack">
+            <div class="grid-form-2">
+              <div class="field-group">
+                <label for="module-num-input" class="field-label">Nomor modul</label>
+                <input
+                  id="module-num-input"
+                  type="number"
+                  min="1"
+                  max="200"
+                  required
+                  x-model="moduleForm.moduleNumber"
+                  class="input measured"
+                />
+              </div>
+
+              <div class="field-group">
+                <label for="module-status-select" class="field-label">Status modul</label>
+                <select id="module-status-select" x-model="moduleForm.status" class="select">
+                  <option value="empty">Belum ada materi</option>
+                  <option value="in_progress">Sedang dipelajari</option>
+                  <option value="needs_review">Perlu review</option>
+                  <option value="mastered">Dikuasai</option>
+                </select>
+              </div>
+            </div>
+
+            <div class="field-group">
+              <label for="module-title-input" class="field-label">Judul modul</label>
+              <input
+                id="module-title-input"
+                type="text"
+                required
+                maxlength="255"
+                placeholder="Contoh: Ketuhanan Yang Maha Esa"
+                x-model="moduleForm.title"
+                class="input"
+              />
+            </div>
+
+            <div class="row-between">
+              <button type="button" @click="showModuleModal = false" class="btn">
+                Batal
+              </button>
+              <button
+                type="submit"
+                :disabled="savingModule"
+                class="btn btn--primary"
+                x-text="savingModule ? 'Menyimpan…' : 'Simpan Modul'"
+              ></button>
+            </div>
+          </form>
+        </div>
+      </div>
+
+      <!-- ==================== MODAL: CONFIRM ARCHIVE ==================== -->
+      <div
+        x-show="confirmDialog.open"
+        class="modal-backdrop"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="confirm-modal-title"
+        @keydown.escape.window="confirmDialog.open = false"
+      >
+        <div class="modal-panel section-stack">
+          <h3 id="confirm-modal-title" class="section-title" x-text="confirmDialog.title"></h3>
+          <p class="prose-sub" x-text="confirmDialog.message"></p>
+          <div class="row-between">
+            <button type="button" @click="confirmDialog.open = false" class="btn">
+              Batal
+            </button>
+            <button
+              type="button"
+              @click="executeConfirmDialog()"
+              :disabled="confirmDialog.processing"
+              class="btn btn--danger"
+              x-text="confirmDialog.processing ? 'Memproses…' : confirmDialog.confirmLabel"
+            ></button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </body>
+</html>

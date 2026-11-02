@@ -1,0 +1,12 @@
+node_modules/
+.env
+.env.*
+!.env.example
+.vercel/
+.hallmark/
+.agents/
+skills-lock.json
+uploads/
+tmp/
+*.log
+.DS_Store
