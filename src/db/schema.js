@@ -122,6 +122,8 @@ export const questions = pgTable(
     moduleId: uuid('module_id').references(() => modules.id, { onDelete: 'set null' }),
     questionOrder: integer('question_order').notNull().default(1),
     topicLabel: varchar('topic_label', { length: 255 }).notNull(),
+    learningObjective: varchar('learning_objective', { length: 500 }),
+    questionType: varchar('question_type', { length: 64 }).notNull().default('single_choice'),
     prompt: text('prompt').notNull(),
     optionsJson: jsonb('options_json').notNull(),
     correctOption: varchar('correct_option', { length: 16 }).notNull(),
@@ -146,6 +148,7 @@ export const quizAttempts = pgTable(
     correctCount: integer('correct_count').notNull().default(0),
     totalCount: integer('total_count').notNull().default(0),
     status: varchar('status', { length: 32 }).notNull().default('submitted'),
+    answersJson: jsonb('answers_json'),
   },
   (table) => [index('quiz_attempts_question_set_id_idx').on(table.questionSetId)]
 );

@@ -1,0 +1,124 @@
+<section x-show="currentView === 'dashboard'" class="view" data-view="dashboard">
+  <header class="split">
+    <div class="stack-xs">
+      <h1 class="page-title" data-view-title tabindex="-1">Perpustakaan kuliah</h1>
+      <p class="lede">
+        Mata kuliah yang sedang Anda pelajari. Buka salah satu untuk melihat modul, rangkuman, dan kesiapan ujian.
+      </p>
+    </div>
+    <div class="cluster">
+      <div>
+        <label for="semester-filter" class="visually-hidden">Filter semester</label>
+        <select id="semester-filter" x-model="selectedSemester" class="select">
+          <option value="ALL">Semua semester</option>
+          <template x-for="sem in semesterOptions" :key="sem">
+            <option :value="sem" x-text="sem"></option>
+          </template>
+        </select>
+      </div>
+      <label class="check">
+        <input type="checkbox" x-model="includeArchivedCourses" @change="loadCourses()" />
+        <span>Tampilkan arsip</span>
+      </label>
+      <button type="button" @click="openCreateCourseModal()" class="btn">Tambah mata kuliah</button>
+    </div>
+  </header>
+
+  <template x-if="loadingCourses && courses.length === 0">
+    <div class="cluster" role="status">
+      <span class="spinner keep-motion" aria-hidden="true"></span>
+      <span class="meta">Memuat daftar mata kuliah…</span>
+    </div>
+  </template>
+
+  <template x-if="!loadingCourses && coursesError">
+    <div class="callout callout--bad" role="alert">
+      <div class="stack-xs">
+        <p><strong>Gagal memuat daftar mata kuliah.</strong> <span x-text="coursesError"></span></p>
+        <div>
+          <button type="button" @click="loadCourses()" class="btn btn--sm">Coba lagi</button>
+        </div>
+      </div>
+    </div>
+  </template>
+
+  <template x-if="!loadingCourses && !coursesError && filteredCourses.length === 0">
+    <div class="empty">
+      <p class="sub-title">Belum ada mata kuliah di sini</p>
+      <p class="lede">
+        Tambahkan mata kuliah dengan kode dan namanya, misalnya <span class="code">MKWN4101</span> Pendidikan Agama Islam. Setelah itu Anda bisa menambahkan modul dan mengunggah halaman BMP.
+      </p>
+      <button type="button" @click="openCreateCourseModal()" class="btn btn--primary">Tambah mata kuliah</button>
+    </div>
+  </template>
+
+  <div x-show="filteredCourses.length > 0" class="ledger">
+    <div class="ledger-head course-row" aria-hidden="true">
+      <span>Mata kuliah</span>
+      <span>Progres modul</span>
+      <span></span>
+    </div>
+
+    <template x-for="course in filteredCourses" :key="course.id">
+      <article class="ledger-row ledger-row--link course-row row-anchor">
+        <div class="stack-xs">
+          <div class="cluster cluster--tight">
+            <span class="code" x-text="course.code"></span>
+            <template x-if="course.semesterLabel">
+              <span class="meta" x-text="course.semesterLabel"></span>
+            </template>
+            <template x-if="course.status === 'archived'">
+              <span class="tag">Diarsipkan</span>
+            </template>
+          </div>
+          <h2 class="sub-title" style="font-weight: 400">
+            <button type="button" class="row-title" @click="openCourse(course.id)" x-text="course.name"></button>
+          </h2>
+          <p class="meta">
+            Aktivitas terakhir <span x-text="formatDateTime(course.lastActivityAt)"></span>
+          </p>
+        </div>
+
+        <div class="stack-xs">
+          <div
+            class="meter"
+            role="img"
+            :aria-label="`${statusSegments(course.moduleCounts).mastered} dikuasai, ${statusSegments(course.moduleCounts).inProgress} sedang dipelajari, ${statusSegments(course.moduleCounts).needsReview} perlu review dari ${statusSegments(course.moduleCounts).total} modul`"
+          >
+            <div class="meter-seg meter-seg--mastered" :style="`width: ${statusSegments(course.moduleCounts).masteredPct}%`"></div>
+            <div class="meter-seg meter-seg--progress" :style="`width: ${statusSegments(course.moduleCounts).inProgressPct}%`"></div>
+            <div class="meter-seg meter-seg--review" :style="`width: ${statusSegments(course.moduleCounts).needsReviewPct}%`"></div>
+          </div>
+          <p class="meta">
+            <strong class="figure" x-text="course.moduleCounts?.total ?? 0"></strong>
+            dari <span class="figure" x-text="course.expectedModuleCount || 9"></span> modul terdaftar<template x-if="(course.moduleCounts?.mastered || 0) > 0"><span>, <span class="figure" x-text="course.moduleCounts.mastered"></span> dikuasai</span></template><template x-if="(course.moduleCounts?.needs_review || 0) > 0"><span>, <span class="figure" x-text="course.moduleCounts.needs_review"></span> perlu review</span></template>
+          </p>
+        </div>
+
+        <div class="row-actions">
+          <div class="menu" x-data="{ open: false }" @click.outside="open = false" @keydown.escape="open = false">
+            <button
+              type="button"
+              class="btn btn--ghost btn--sm"
+              @click="open = !open"
+              :aria-expanded="open.toString()"
+              aria-haspopup="menu"
+              :aria-label="`Kelola ${course.name}`"
+            >
+              Kelola
+            </button>
+            <div class="menu-panel" x-show="open" x-transition.opacity.duration.120ms role="menu" @click="open = false">
+              <button type="button" role="menuitem" class="menu-item" @click="openEditCourseModal(course)">Edit mata kuliah</button>
+              <template x-if="course.status !== 'archived'">
+                <button type="button" role="menuitem" class="menu-item menu-item--danger" @click="confirmArchiveCourse(course)">Arsipkan</button>
+              </template>
+              <template x-if="course.status === 'archived'">
+                <button type="button" role="menuitem" class="menu-item" @click="restoreCourse(course)">Pulihkan</button>
+              </template>
+            </div>
+          </div>
+        </div>
+      </article>
+    </template>
+  </div>
+</section>

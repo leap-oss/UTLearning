@@ -370,6 +370,28 @@ export function createLearningRouter({
     }
   });
 
+  // POST /api/question-sets/:questionSetId/draft
+  router.post('/question-sets/:questionSetId/draft', async (req, res) => {
+    const parsedId = uuidSchema.safeParse(req.params.questionSetId);
+    if (!parsedId.success) {
+      return res.status(400).json({
+        error: 'INVALID_QUESTION_SET_ID',
+        message: 'Format questionSetId tidak valid.',
+      });
+    }
+
+    try {
+      const { saveQuizDraft } = await import('../services/quizAndRemedialService.js');
+      const draft = await saveQuizDraft(parsedId.data, req.body || {});
+      return res.status(200).json({ draft });
+    } catch (err) {
+      return res.status(500).json({
+        error: 'DB_ERROR',
+        message: 'Gagal menyimpan draf kuis.',
+      });
+    }
+  });
+
   // GET /api/attempts/:attemptId
   router.get('/attempts/:attemptId', async (req, res) => {
     const parsedId = uuidSchema.safeParse(req.params.attemptId);
@@ -419,6 +441,7 @@ export function createLearningRouter({
       const result = await enqueueRemedialGeneration({
         attemptId: parsedId.data,
         idempotencyKey,
+        questionCount: req.body?.questionCount,
         regenerate: Boolean(req.body?.regenerate),
         overrideBudget: Boolean(req.body?.overrideBudget),
         aiQueue,

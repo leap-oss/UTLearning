@@ -1,0 +1,342 @@
+<section x-show="currentView === 'course' && activeCourse" class="view" data-view="course">
+  <div class="stack-lg">
+    <nav class="crumbs" aria-label="Lokasi">
+      <button type="button" class="crumb" @click="backToDashboard()">Perpustakaan</button>
+      <span class="crumb-current" aria-current="page" x-text="activeCourse?.name"></span>
+    </nav>
+
+    <header class="masthead">
+      <div class="stack-sm">
+        <div class="cluster">
+          <span class="code" x-text="activeCourse?.code"></span>
+          <template x-if="activeCourse?.semesterLabel">
+            <span class="meta" x-text="activeCourse?.semesterLabel"></span>
+          </template>
+          <span class="meta">
+            Target <span class="figure" x-text="courseOverviewMetrics.expected"></span> modul
+          </span>
+          <template x-if="activeCourse?.status === 'archived'">
+            <span class="tag">Diarsipkan</span>
+          </template>
+        </div>
+        <h1 class="page-title" data-view-title tabindex="-1" x-text="activeCourse?.name"></h1>
+      </div>
+
+      <div class="cluster cluster--tight">
+        <button type="button" @click="openCreateModuleModal()" class="btn btn--sm">Tambah modul</button>
+        <div class="menu" x-data="{ open: false }" @click.outside="open = false" @keydown.escape="open = false">
+          <button type="button" class="btn btn--ghost btn--sm" @click="open = !open" :aria-expanded="open.toString()" aria-haspopup="menu">
+            Kelola
+          </button>
+          <div class="menu-panel" x-show="open" x-transition.opacity.duration.120ms role="menu" @click="open = false">
+            <button type="button" role="menuitem" class="menu-item" @click="openEditCourseModal(activeCourse)">Edit mata kuliah</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Learning progress from real module counts -->
+      <div class="masthead-progress stack-md">
+        <div class="stack-sm">
+          <div
+            class="meter"
+            role="img"
+            :aria-label="`Progres modul: ${courseOverviewMetrics.mastered} dikuasai, ${courseOverviewMetrics.inProgress} sedang dipelajari, ${courseOverviewMetrics.needsReview} perlu review, ${courseOverviewMetrics.empty} belum dipelajari`"
+          >
+            <div class="meter-seg meter-seg--mastered" :style="`width: ${statusSegments(activeCourse?.moduleCounts).masteredPct}%`"></div>
+            <div class="meter-seg meter-seg--progress" :style="`width: ${statusSegments(activeCourse?.moduleCounts).inProgressPct}%`"></div>
+            <div class="meter-seg meter-seg--review" :style="`width: ${statusSegments(activeCourse?.moduleCounts).needsReviewPct}%`"></div>
+          </div>
+          <div class="legend" x-show="courseOverviewMetrics.total > 0">
+            <span class="state state--mastered">Dikuasai <span class="figure" x-text="courseOverviewMetrics.mastered"></span></span>
+            <span class="state state--progress">Sedang dipelajari <span class="figure" x-text="courseOverviewMetrics.inProgress"></span></span>
+            <span class="state state--review">Perlu review <span class="figure" x-text="courseOverviewMetrics.needsReview"></span></span>
+            <span class="state state--empty">Belum dipelajari <span class="figure" x-text="courseOverviewMetrics.empty"></span></span>
+          </div>
+        </div>
+
+        <dl class="figures">
+          <div>
+            <dt class="label">Modul terdaftar</dt>
+            <dd class="figure-value">
+              <span x-text="courseOverviewMetrics.total"></span><span class="meta" x-text="` / ${courseOverviewMetrics.expected}`"></span>
+            </dd>
+          </div>
+          <div>
+            <dt class="label">Study Pack siap</dt>
+            <dd class="figure-value" x-text="courseOverviewMetrics.verifiedPacks"></dd>
+          </div>
+          <div>
+            <dt class="label">Kuis dikerjakan</dt>
+            <dd class="figure-value" x-text="courseOverviewMetrics.totalAttempts"></dd>
+          </div>
+          <div>
+            <dt class="label">Rata-rata skor modul</dt>
+            <dd
+              :class="courseOverviewMetrics.avgScore != null ? 'figure-value' : 'figure-value figure-value--none'"
+              x-text="courseOverviewMetrics.avgScore != null ? `${courseOverviewMetrics.avgScore}%` : 'Belum ada kuis'"
+            ></dd>
+          </div>
+        </dl>
+      </div>
+    </header>
+  </div>
+
+  <!-- Knowledge gaps (only when real data shows them) -->
+  <template x-if="knowledgeGaps.length > 0">
+    <section aria-labelledby="gaps-heading" class="stack-md">
+      <div class="stack-2xs">
+        <h2 id="gaps-heading" class="section-title">Perlu diperkuat</h2>
+        <p class="lede">Modul dengan status perlu review atau topik yang akurasinya di bawah 75% pada kuis.</p>
+      </div>
+      <div class="ledger">
+        <template x-for="gap in knowledgeGaps" :key="gap.moduleId">
+          <div class="ledger-row" style="grid-template-columns: minmax(0, 1fr) auto">
+            <div class="stack-xs">
+              <div class="cluster cluster--tight">
+                <span class="row-index" x-text="`Modul ${gap.moduleNumber}`"></span>
+                <span class="sub-title" x-text="gap.title"></span>
+              </div>
+              <div class="cluster cluster--tight">
+                <template x-for="wt in gap.weakTopics || []" :key="wt.topicLabel">
+                  <span class="state state--review">
+                    <span x-text="wt.topicLabel"></span>
+                    <span class="figure" x-text="`${wt.accuracyPercent}%`"></span>
+                  </span>
+                </template>
+                <template x-if="!(gap.weakTopics || []).length">
+                  <span class="meta">Status modul ditandai perlu review.</span>
+                </template>
+              </div>
+            </div>
+            <button type="button" class="btn btn--sm" @click="openModule(gap.moduleId, 'progress')">Lihat rincian</button>
+          </div>
+        </template>
+      </div>
+    </section>
+  </template>
+
+  <!-- Modules -->
+  <section aria-labelledby="modules-heading" class="stack-md">
+    <div class="split">
+      <div class="stack-2xs">
+        <h2 id="modules-heading" class="section-title">Modul</h2>
+        <p class="lede">Urutan tidak dikunci. Buka modul mana saja untuk mengunggah halaman, membaca rangkuman, atau berlatih.</p>
+      </div>
+    </div>
+
+    <template x-if="!activeCourse?.modules || activeCourse.modules.length === 0">
+      <div class="empty">
+        <p class="sub-title">Belum ada modul</p>
+        <p class="lede">Tambahkan modul yang sedang Anda pelajari. Nomornya bebas, tidak harus berurutan.</p>
+        <button type="button" @click="openCreateModuleModal()" class="btn btn--primary">Tambah modul</button>
+      </div>
+    </template>
+
+    <div x-show="activeCourse?.modules && activeCourse.modules.length > 0" class="ledger">
+      <div class="ledger-head module-head" aria-hidden="true">
+        <span>No.</span>
+        <span>Modul</span>
+        <span>Materi dan kuis</span>
+        <span></span>
+      </div>
+
+      <template x-for="mod in activeCourse?.modules" :key="mod.id">
+        <article class="ledger-row ledger-row--link module-row row-anchor">
+          <span class="row-index" x-text="String(mod.moduleNumber).padStart(2, '0')"></span>
+
+          <div class="stack-2xs">
+            <h3 class="sub-title" style="font-weight: 400">
+              <button type="button" class="row-title" @click="openModule(mod.id)" x-text="mod.title"></button>
+            </h3>
+            <div class="cluster">
+              <span :class="moduleStatusBadgeClass(mod.status)" x-text="moduleStatusLabel(mod.status)"></span>
+              <span class="meta">Diperbarui <span x-text="formatDateTime(mod.updatedAt)"></span></span>
+            </div>
+          </div>
+
+          <div class="stack-2xs">
+            <template x-if="getModuleProgressItem(mod.id)?.hasVerifiedStudyPack">
+              <span class="state state--info" x-text="`Study Pack v${getModuleProgressItem(mod.id)?.latestStudyPackVersion || 1}`"></span>
+            </template>
+            <template x-if="!getModuleProgressItem(mod.id)?.hasVerifiedStudyPack">
+              <span class="meta">Belum ada Study Pack</span>
+            </template>
+
+            <template x-if="(getModuleProgressItem(mod.id)?.attemptCount || 0) > 0">
+              <span class="meta">
+                Skor terakhir
+                <strong class="figure" x-text="`${getModuleProgressItem(mod.id)?.latestScore}%`"></strong>
+                dari <span class="figure" x-text="getModuleProgressItem(mod.id)?.attemptCount"></span> kuis<template x-if="(getModuleProgressItem(mod.id)?.weakTopics?.length || 0) > 0"><span>, <span class="state state--review" x-text="`${getModuleProgressItem(mod.id)?.weakTopics?.length} topik lemah`"></span></span></template>
+              </span>
+            </template>
+            <template x-if="!((getModuleProgressItem(mod.id)?.attemptCount || 0) > 0)">
+              <span class="meta">Belum ada kuis</span>
+            </template>
+          </div>
+
+          <div class="row-actions">
+            <div class="menu" x-data="{ open: false }" @click.outside="open = false" @keydown.escape="open = false">
+              <button
+                type="button"
+                class="btn btn--ghost btn--sm"
+                @click="open = !open"
+                :aria-expanded="open.toString()"
+                aria-haspopup="menu"
+                :aria-label="`Kelola modul ${mod.moduleNumber}`"
+              >
+                Kelola
+              </button>
+              <div class="menu-panel" x-show="open" x-transition.opacity.duration.120ms role="menu" @click="open = false">
+                <button type="button" role="menuitem" class="menu-item" @click="openEditModuleModal(mod)">Edit modul</button>
+                <button type="button" role="menuitem" class="menu-item menu-item--danger" @click="confirmArchiveModule(mod)">Arsipkan modul</button>
+              </div>
+            </div>
+          </div>
+        </article>
+      </template>
+    </div>
+  </section>
+
+  <!-- Comprehensive exam simulation -->
+  <section
+    aria-labelledby="exam-sim-heading"
+    :class="examEligibility.ready ? 'band stack-xl' : 'band band--locked stack-xl'"
+  >
+    <div class="exam-grid">
+      <div class="stack-md">
+        <span
+          :class="examEligibility.ready ? 'state state--ok' : 'state state--empty'"
+          x-text="examEligibility.ready ? 'Siap dikerjakan' : 'Belum tersedia'"
+        ></span>
+        <h2 id="exam-sim-heading" class="section-title">Simulasi ujian komprehensif</h2>
+        <p class="lede">
+          Satu set soal lintas modul yang disusun dari Study Pack yang sudah Anda verifikasi. Gunakan untuk mengukur kesiapan menjelang ujian akhir.
+        </p>
+        <p class="meta">Ini latihan mandiri dari materi Anda sendiri, bukan prediksi soal ujian resmi Universitas Terbuka.</p>
+
+        <template x-if="!examEligibility.ready">
+          <div class="callout">
+            <p>
+              Butuh Study Pack terverifikasi di minimal <strong class="figure">2</strong> modul. Saat ini
+              baru <strong class="figure" x-text="examEligibility.verified"></strong> modul siap. Tambahkan
+              <strong class="figure" x-text="examEligibility.missing"></strong> modul lagi untuk membuka simulasi.
+            </p>
+          </div>
+        </template>
+      </div>
+
+      <!-- Locked: eligibility checklist from real module data -->
+      <template x-if="!examEligibility.ready">
+        <div class="stack-sm">
+          <p class="label">Kesiapan per modul</p>
+          <template x-if="(courseProgress?.modules || []).length === 0">
+            <p class="meta">Tambahkan modul, unggah halaman BMP, lalu susun Study Pack-nya.</p>
+          </template>
+          <div class="checklist" x-show="(courseProgress?.modules || []).length > 0">
+            <template x-for="m in courseProgress?.modules || []" :key="m.moduleId">
+              <div class="checklist-item">
+                <span :class="m.hasVerifiedStudyPack ? 'mark mark--ok' : 'mark'" aria-hidden="true"></span>
+                <span>
+                  <span class="row-index" x-text="`Modul ${m.moduleNumber}`"></span>
+                  <span x-text="m.title"></span>
+                </span>
+                <span class="meta" x-text="m.hasVerifiedStudyPack ? `Study Pack v${m.latestStudyPackVersion || 1}` : 'Belum ada Study Pack'"></span>
+              </div>
+            </template>
+          </div>
+        </div>
+      </template>
+
+      <!-- Ready: configure and start -->
+      <template x-if="examEligibility.ready">
+        <div class="stack-lg">
+          <fieldset class="stack-sm" style="border: 0; margin: 0; padding: 0">
+            <legend class="field-label" style="padding: 0; margin-bottom: var(--space-sm)">
+              Cakupan modul, <span class="figure" x-text="examSimForm.selectedModuleIds.length"></span> dipilih
+            </legend>
+            <div class="checklist">
+              <template x-for="vm in verifiedCourseModules" :key="vm.moduleId">
+                <label class="checklist-item">
+                  <input
+                    type="checkbox"
+                    :checked="examSimForm.selectedModuleIds.includes(vm.moduleId)"
+                    @change="toggleExamSimModule(vm.moduleId)"
+                  />
+                  <span>
+                    <span class="row-index" x-text="`Modul ${vm.moduleNumber}`"></span>
+                    <span x-text="vm.title"></span>
+                  </span>
+                  <span class="meta" x-text="`Study Pack v${vm.latestStudyPackVersion || 1}`"></span>
+                </label>
+              </template>
+            </div>
+          </fieldset>
+
+          <div class="form-grid">
+            <div class="field">
+              <label for="sim-question-count" class="field-label">Jumlah soal</label>
+              <select id="sim-question-count" x-model="examSimForm.questionCount" class="select">
+                <option value="10">10 soal (Latihan Modul)</option>
+                <option value="15">15 soal (Simulasi Singkat)</option>
+                <option value="20">20 soal (Simulasi Standar)</option>
+                <option value="30">30 soal (Simulasi Komprehensif)</option>
+                <option value="45">45 soal (Simulasi Lengkap UAS)</option>
+              </select>
+            </div>
+            <div class="field">
+              <label for="sim-difficulty" class="field-label">Tingkat kesulitan</label>
+              <select id="sim-difficulty" x-model="examSimForm.difficulty" class="select">
+                <option value="mixed">Campuran seimbang</option>
+                <option value="medium">Menengah</option>
+                <option value="hard">Analitis</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="split split--center">
+            <p class="meta" x-text="examSimForm.selectedModuleIds.length < 2 ? 'Pilih minimal 2 modul untuk simulasi lintas modul.' : 'Soal disusun adaptif dalam satu permintaan AI.'"></p>
+            <button
+              type="button"
+              @click="generateExamSimulation()"
+              :disabled="examSimForm.selectedModuleIds.length < 2 || Boolean(activeAiJob)"
+              class="btn btn--primary btn--lg"
+            >
+              Mulai simulasi
+            </button>
+          </div>
+        </div>
+      </template>
+    </div>
+
+    <!-- History -->
+    <template x-if="courseProgress?.examSimulations && courseProgress.examSimulations.length > 0">
+      <div class="stack-sm">
+        <h3 class="sub-title">
+          Riwayat simulasi <span class="tab-count" x-text="courseProgress.examSimulations.length"></span>
+        </h3>
+        <div class="ledger">
+          <template x-for="sim in courseProgress.examSimulations" :key="sim.id">
+            <div class="ledger-row" style="grid-template-columns: minmax(0, 1fr) auto">
+              <div class="stack-2xs">
+                <p class="sub-title" x-text="sim.title"></p>
+                <p class="meta">
+                  <span x-text="formatDateTime(sim.createdAt)"></span><template x-if="(sim.metadata?.includedModules || []).length"><span>, modul <span class="figure" x-text="(sim.metadata.includedModules || []).map((m) => m.moduleNumber).join(', ')"></span></span></template><template x-if="sim.metadata?.difficulty"><span>, <span x-text="difficultyLabel(sim.metadata.difficulty).toLowerCase()"></span></span></template>,
+                  <span class="figure" x-text="sim.attempts?.length || 0"></span> percobaan
+                </p>
+              </div>
+              <div class="cluster cluster--tight">
+                <template x-if="sim.attempts && sim.attempts.length > 0">
+                  <button type="button" @click="openAttemptReview(sim.attempts[0].id)" class="btn btn--ghost btn--sm">
+                    <span>Laporan terakhir</span>
+                    <span class="figure" x-text="`${sim.attempts[0].score}%`"></span>
+                  </button>
+                </template>
+                <button type="button" @click="startQuiz(sim.id)" class="btn btn--sm">Kerjakan</button>
+              </div>
+            </div>
+          </template>
+        </div>
+      </div>
+    </template>
+  </section>
+</section>

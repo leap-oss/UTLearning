@@ -1,6 +1,8 @@
 /* Hallmark · shape: app screen · genre: modern-minimal · theme: custom (editorial dark) · redesign: full
  * nav: sticky top bar + breadcrumbs · signature: ruled study ledger and serif reading column · states: default, hover, focus-visible, active, disabled, loading, empty, error, locked
  * axes: dark/roman-serif/cool · posture: restrained · contrast: pass · v2.0.0 */
+/* Hallmark · dropped https://cdn.tailwindcss.com · replaced with compiled local tailwind css cli for production */
+/* Hallmark · dropped @click="generateRemedialFromAttempt(activeAttemptReview.attemptId)" · upgraded to configurable question count method */
 /* Hallmark · pre-emit critique: P8 H9 E8 S9 R9 V8 · weakest: V, colour now carries state only and the primary action is a chalk fill instead of a hue */
 @import url("./tokens.css");
 @import url("./base.css");
@@ -1315,4 +1317,39 @@ label.checklist-item { cursor: pointer; }
   display: flex;
   justify-content: flex-end;
   gap: var(--space-xs);
+}
+
+/* =========================================================
+   15. COMPREHENSIVE LEARNING MATERIALS (STUDY PACK V2)
+   ========================================================= */
+.topic-objectives {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2xs);
+  padding: var(--space-sm) var(--space-md);
+  background: var(--color-paper-2);
+  border-left: 2px solid var(--color-accent);
+  margin: var(--space-xs) 0;
+}
+
+.topic-objectives .takeaways {
+  padding-left: var(--space-md);
+  margin: 0;
+}
+
+.step-node {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-sm);
+  padding: var(--space-sm) var(--space-md);
+  border-left: 2px solid var(--color-rule-2);
+  background: var(--color-paper);
+}
+
+.step-node-num {
+  font-family: var(--font-outlier);
+  font-size: var(--text-xs);
+  color: var(--color-accent);
+  flex-shrink: 0;
+  padding-top: 2px;
 }

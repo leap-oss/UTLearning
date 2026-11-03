@@ -1,0 +1,115 @@
+<!-- ==================== VIEW 5: RESULTS & REVIEW ==================== -->
+<section x-show="currentView === 'attempt_review' && activeAttemptReview" class="view" data-view="attempt_review">
+  <div class="quiz">
+    <div>
+      <button type="button" @click="returnFromQuizOrReview()" class="btn btn--ghost btn--sm">Selesai & kembali ke modul</button>
+    </div>
+
+    <header class="stack-lg">
+      <div class="stack-sm">
+        <h1 class="page-title" style="font-size: var(--text-3xl)" data-view-title tabindex="-1" x-text="activeAttemptReview?.questionSetTitle"></h1>
+        <p class="meta">Dikumpulkan <span x-text="formatDateTime(activeAttemptReview?.submittedAt)"></span></p>
+      </div>
+      <div class="split split--center" style="border-top: 1px solid var(--color-rule); padding-top: var(--space-lg)">
+        <div class="stack-xs">
+          <span class="label">Skor</span>
+          <span class="big-figure">
+            <span x-text="`${activeAttemptReview?.score ?? 0}%`"></span>
+            <small x-text="`${activeAttemptReview?.correctCount ?? 0} dari ${activeAttemptReview?.totalCount ?? 0} benar`"></small>
+          </span>
+        </div>
+        <template x-if="(activeAttemptReview?.score || 0) < 100">
+          <div class="stack-xs" style="align-items: flex-end">
+            <div class="cluster cluster--tight">
+              <select x-model="remedialQuestionCount" class="select" aria-label="Jumlah soal remedial">
+                <option value="3">3 soal (Fokus Cepat)</option>
+                <option value="5">5 soal (Standar)</option>
+                <option value="10">10 soal (Remedial Penuh)</option>
+              </select>
+              <button
+                type="button"
+                @click="generateRemedialFromAttempt(activeAttemptReview.attemptId, remedialQuestionCount)"
+                :disabled="Boolean(activeAiJob)"
+                class="btn btn--primary btn--lg"
+              >
+                Susun remedial
+              </button>
+            </div>
+            <span class="meta">Soal baru yang fokus pada sasaran belajar yang belum tuntas.</span>
+          </div>
+        </template>
+      </div>
+    </header>
+
+    <template x-if="activeAttemptReview?.moduleBreakdown && activeAttemptReview.moduleBreakdown.length > 1">
+      <section class="stack-md" aria-labelledby="module-breakdown-heading">
+        <h2 id="module-breakdown-heading" class="section-title">Skor per modul</h2>
+        <div class="ledger">
+          <template x-for="mb in activeAttemptReview.moduleBreakdown" :key="mb.moduleId">
+            <div class="ledger-row" style="grid-template-columns: minmax(0, 1fr) minmax(5rem, 10rem) 6rem">
+              <span>
+                <span class="row-index" x-text="`Modul ${mb.moduleNumber}`"></span>
+                <span x-text="mb.moduleTitle"></span>
+              </span>
+              <div class="meter meter--thin" role="img" :aria-label="`Skor ${mb.score}%`">
+                <div :class="mb.score >= 80 ? 'meter-seg meter-seg--mastered' : 'meter-seg meter-seg--review'" :style="`width: ${mb.score}%`"></div>
+              </div>
+              <span class="meta" style="text-align: right">
+                <strong class="figure" x-text="`${mb.score}%`"></strong>
+                <span class="figure" x-text="`${mb.correct}/${mb.total}`"></span>
+              </span>
+            </div>
+          </template>
+        </div>
+      </section>
+    </template>
+
+    <section class="stack-md" aria-labelledby="review-heading">
+      <h2 id="review-heading" class="section-title">Pembahasan</h2>
+      <template x-for="(rq, rIdx) in activeAttemptReview?.questions || []" :key="rq.questionId">
+        <article class="question">
+          <div class="cluster">
+            <span class="code" x-text="`Soal ${rIdx + 1}`"></span>
+            <span :class="rq.isCorrect ? 'state state--ok' : 'state state--bad'" x-text="rq.isCorrect ? 'Benar' : 'Kurang tepat'"></span>
+            <span class="meta" x-text="rq.topicLabel"></span>
+            <template x-if="rq.difficulty">
+              <span class="tag" x-text="difficultyLabel(rq.difficulty)"></span>
+            </template>
+            <template x-if="rq.questionType && rq.questionType !== 'single_choice'">
+              <span class="tag" x-text="rq.questionType.replace('_', ' ')"></span>
+            </template>
+          </div>
+          <template x-if="rq.learningObjective">
+            <p class="meta" style="font-size: var(--text-xs)" x-text="`Sasaran: ${rq.learningObjective}`"></p>
+          </template>
+          <p class="question-prompt" x-text="rq.prompt"></p>
+          <div class="answer-pair">
+            <div :class="rq.isCorrect ? 'answer-cell answer-cell--ok' : 'answer-cell answer-cell--bad'">
+              <span class="option-key" x-text="rq.selectedOption || '?'"></span>
+              <span class="stack-2xs">
+                <span class="label">Jawaban Anda</span>
+                <span x-text="optionText(rq, rq.selectedOption)"></span>
+              </span>
+            </div>
+            <template x-if="!rq.isCorrect">
+              <div class="answer-cell answer-cell--ok">
+                <span class="option-key" x-text="rq.correctOption"></span>
+                <span class="stack-2xs">
+                  <span class="label">Jawaban benar</span>
+                  <span x-text="optionText(rq, rq.correctOption)"></span>
+                </span>
+              </div>
+            </template>
+          </div>
+          <div class="ai-note">
+            <span class="label">Pembahasan</span>
+            <p class="prose" x-text="rq.explanation"></p>
+            <template x-if="(rq.sourceRefs || []).length">
+              <p class="meta" x-text="`Sumber: ${(rq.sourceRefs || []).join(', ')}`"></p>
+            </template>
+          </div>
+        </article>
+      </template>
+    </section>
+  </div>
+</section>

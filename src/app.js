@@ -14,6 +14,7 @@ import { findJobById, getAiUsageSummary } from './services/aiJobRepository.js';
 import { defaultAiQueue } from './services/aiQueue.js';
 import { createCourseRouter } from './routes/courseRoutes.js';
 import { createLearningRouter } from './routes/learningRoutes.js';
+import { renderModularHtml } from './services/htmlRenderer.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -36,7 +37,19 @@ export function createApp({
 
   app.disable('x-powered-by');
   app.use(express.json({ limit: '2mb' }));
-  app.use(express.static(publicDir));
+
+  // Render modular HTML shell (assembles public/partials/*.html into index.html)
+  app.get(['/', '/index.html'], (_req, res) => {
+    try {
+      const html = renderModularHtml(publicDir);
+      res.setHeader('Content-Type', 'text/html; charset=utf-8');
+      return res.status(200).send(html);
+    } catch (_err) {
+      return res.status(500).send('Error rendering modular HTML.');
+    }
+  });
+
+  app.use(express.static(publicDir, { index: false }));
 
   app.use('/api', (req, res, next) => {
     const reqStart = performance.now();

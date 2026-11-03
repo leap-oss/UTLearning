@@ -143,11 +143,34 @@ export async function generateStructuredContent({
     generationConfig.tools = [{ googleSearch: {} }];
   }
 
-  const response = await ai.models.generateContent({
-    model,
-    contents,
-    config: generationConfig,
-  });
+  let response;
+  try {
+    response = await ai.models.generateContent({
+      model,
+      contents,
+      config: generationConfig,
+    });
+  } catch (err) {
+    const errMsg = String(err?.message || '').toLowerCase();
+    if (
+      useSearch &&
+      generationConfig.responseSchema &&
+      (errMsg.includes('response_schema') ||
+        errMsg.includes('response schema') ||
+        errMsg.includes('grounding') ||
+        errMsg.includes('not supported with'))
+    ) {
+      const fallbackConfig = { ...generationConfig };
+      delete fallbackConfig.responseSchema;
+      response = await ai.models.generateContent({
+        model,
+        contents,
+        config: fallbackConfig,
+      });
+    } else {
+      throw err;
+    }
+  }
 
   const usageMetadata = response?.usageMetadata || null;
   const rawText = typeof response?.text === 'string' ? response.text : '';

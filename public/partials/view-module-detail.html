@@ -1,0 +1,606 @@
+<!-- ==================== VIEW 3: MODULE WORKSPACE ==================== -->
+<section x-show="currentView === 'module' && activeModule" class="view" data-view="module">
+  <div class="stack-lg">
+    <nav class="crumbs" aria-label="Lokasi">
+      <button type="button" class="crumb" @click="backToDashboard()">Perpustakaan</button>
+      <button type="button" class="crumb" @click="backToCourse()" x-text="activeModule?.course?.name || 'Mata kuliah'"></button>
+      <span class="crumb-current" aria-current="page" x-text="`Modul ${activeModule?.moduleNumber}`"></span>
+    </nav>
+
+    <header class="stack-sm">
+      <div class="cluster">
+        <span class="code" x-text="`Modul ${activeModule?.moduleNumber}`"></span>
+        <span :class="moduleStatusBadgeClass(activeModule?.status)" x-text="moduleStatusLabel(activeModule?.status)"></span>
+      </div>
+      <h1 class="page-title" data-view-title tabindex="-1" x-text="activeModule?.title"></h1>
+      <p class="lede" x-text="moduleNextStep"></p>
+    </header>
+
+    <div class="tabs" role="tablist" aria-label="Tahap belajar modul">
+      <button type="button" role="tab" class="tab" @click="moduleTab = 'sources'" :aria-selected="(moduleTab === 'sources').toString()">
+        Sumber BMP <span class="tab-count" x-text="activeModule?.sources?.length || 0"></span>
+      </button>
+      <button type="button" role="tab" class="tab" @click="moduleTab = 'study'" :aria-selected="(moduleTab === 'study').toString()">
+        Rangkuman <span class="tab-count" x-text="activeModule?.studyPacks?.length || 0"></span>
+      </button>
+      <button type="button" role="tab" class="tab" @click="moduleTab = 'quiz'" :aria-selected="(moduleTab === 'quiz').toString()">
+        Kuis <span class="tab-count" x-text="activeModule?.questionSets?.length || 0"></span>
+      </button>
+      <button type="button" role="tab" class="tab" @click="moduleTab = 'progress'" :aria-selected="(moduleTab === 'progress').toString()">
+        Progres
+      </button>
+    </div>
+  </div>
+
+  <!-- TAB: SOURCES & EXTRACTION REVIEW -->
+  <div x-show="moduleTab === 'sources'" role="tabpanel" aria-label="Sumber BMP" class="stack-xl">
+    <div class="stack-md">
+      <label class="dropzone">
+        <div class="stack-2xs">
+          <span class="sub-title">Unggah foto halaman BMP</span>
+          <span class="meta">Rangkuman, Tes Formatif, atau halaman materi dalam JPEG, PNG, atau WebP. Pilih beberapa sekaligus, lalu atur urutannya.</span>
+        </div>
+        <span class="btn" aria-hidden="true">Pilih foto</span>
+        <input
+          type="file"
+          multiple
+          accept="image/jpeg,image/png,image/webp"
+          @change="handleFileSelect($event)"
+          class="visually-hidden"
+        />
+      </label>
+
+      <template x-if="stagedFiles.length > 0">
+        <div class="stack-md">
+          <div class="split split--center">
+            <h2 class="sub-title">
+              Siap diekstrak <span class="tab-count" x-text="stagedFiles.length"></span>
+            </h2>
+            <div class="cluster cluster--tight">
+              <button type="button" @click="clearStagedFiles()" class="btn btn--ghost">Batal</button>
+              <button type="button" @click="submitSourceExtraction()" :disabled="Boolean(activeAiJob)" class="btn btn--primary">
+                Ekstrak halaman
+              </button>
+            </div>
+          </div>
+          <div class="ledger">
+            <template x-for="(item, idx) in stagedFiles" :key="item.id">
+              <div class="ledger-row staged-row">
+                <span class="row-index" x-text="String(idx + 1).padStart(2, '0')"></span>
+                <div class="stack-2xs" style="min-width: 0">
+                  <span class="sub-title" style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap" x-text="item.file.name"></span>
+                  <span class="meta figure" x-text="formatBytes(item.file.size)"></span>
+                </div>
+                <div class="cluster cluster--tight">
+                  <label class="cluster cluster--tight">
+                    <span class="label">Hal.</span>
+                    <input type="number" min="1" x-model="item.pageOrder" class="input input--narrow figure" aria-label="Nomor halaman" />
+                  </label>
+                  <select x-model="item.label" class="select" aria-label="Jenis halaman">
+                    <option value="rangkuman">Rangkuman</option>
+                    <option value="tes_formatif">Tes Formatif</option>
+                    <option value="materi">Materi</option>
+                  </select>
+                  <button type="button" @click="moveStagedFile(idx, -1)" :disabled="idx === 0" class="btn btn--ghost btn--sm" aria-label="Pindah ke atas">Naik</button>
+                  <button type="button" @click="moveStagedFile(idx, 1)" :disabled="idx === stagedFiles.length - 1" class="btn btn--ghost btn--sm" aria-label="Pindah ke bawah">Turun</button>
+                  <button type="button" @click="removeStagedFile(idx)" class="btn btn--ghost btn--sm">Hapus</button>
+                </div>
+              </div>
+            </template>
+          </div>
+        </div>
+      </template>
+    </div>
+
+    <section class="stack-md" aria-labelledby="sources-heading">
+      <div class="split">
+        <div class="stack-2xs">
+          <h2 id="sources-heading" class="section-title">Hasil ekstraksi</h2>
+          <p class="lede" x-show="(activeModule?.sources?.length || 0) > 0">
+            <span class="figure" x-text="(activeModule?.sources?.length || 0) - unreviewedSourcesCount"></span>
+            dari <span class="figure" x-text="activeModule?.sources?.length || 0"></span> halaman sudah diverifikasi. Periksa teks hasil bacaan AI sebelum menyusun rangkuman.
+          </p>
+        </div>
+        <template x-if="(activeModule?.sources?.length || 0) > 0 && unreviewedSourcesCount === 0">
+          <button type="button" @click="moduleTab = 'study'" class="btn">Lanjut ke rangkuman</button>
+        </template>
+      </div>
+
+      <template x-if="!activeModule?.sources || activeModule.sources.length === 0">
+        <div class="empty">
+          <p class="sub-title">Belum ada halaman</p>
+          <p class="lede">Unggah foto halaman BMP di atas. Teksnya akan dibaca AI dan muncul di sini untuk Anda periksa.</p>
+        </div>
+      </template>
+
+      <div class="ledger" x-show="(activeModule?.sources?.length || 0) > 0">
+        <template x-for="src in activeModule?.sources" :key="src.id">
+          <article class="source-item">
+            <div class="split split--center">
+              <div class="cluster">
+                <span class="code" x-text="`Hal. ${src.pageOrder}`"></span>
+                <span class="tag" x-text="sourceLabel(src.label)"></span>
+                <span
+                  :class="src.needsReview ? 'state state--review' : 'state state--ok'"
+                  x-text="src.needsReview ? 'Perlu diperiksa' : 'Terverifikasi'"
+                ></span>
+                <span class="meta" x-text="src.fileName"></span>
+              </div>
+              <div class="cluster cluster--tight">
+                <template x-if="src.needsReview && editingSourceId !== src.id">
+                  <button type="button" @click="quickApproveSource(src)" class="btn btn--sm">Tandai sudah benar</button>
+                </template>
+                <button
+                  type="button"
+                  @click="editingSourceId === src.id ? (editingSourceId = null) : startEditSource(src)"
+                  class="btn btn--ghost btn--sm"
+                  x-text="editingSourceId === src.id ? 'Tutup editor' : 'Koreksi teks'"
+                ></button>
+                <button type="button" @click="removeSourceAsset(src)" class="btn btn--ghost btn--sm">Hapus</button>
+              </div>
+            </div>
+
+            <template x-if="src.extractedContentJson?.ambiguousParts?.length > 0">
+              <div class="callout">
+                <div class="stack-2xs">
+                  <p><strong>Bagian yang mungkin salah baca</strong></p>
+                  <ul class="takeaways" style="font-size: var(--text-sm)">
+                    <template x-for="(amb, aIdx) in src.extractedContentJson.ambiguousParts" :key="aIdx">
+                      <li x-text="amb"></li>
+                    </template>
+                  </ul>
+                </div>
+              </div>
+            </template>
+
+            <div x-show="editingSourceId !== src.id" class="stack-sm">
+              <h3 x-show="src.extractedContentJson?.pageTitle" class="sub-title" x-text="src.extractedContentJson?.pageTitle"></h3>
+              <div class="well">
+                <pre class="source-text" x-text="src.extractedContentJson?.extractedText || '(Belum ada teks hasil ekstraksi)'"></pre>
+              </div>
+            </div>
+
+            <div x-show="editingSourceId === src.id" class="stack-md">
+              <div class="form-grid form-grid--3">
+                <div class="field">
+                  <label :for="`src-order-${src.id}`" class="field-label">Halaman</label>
+                  <input :id="`src-order-${src.id}`" type="number" min="1" x-model="sourceEditForm.pageOrder" class="input figure" />
+                </div>
+                <div class="field">
+                  <label :for="`src-label-${src.id}`" class="field-label">Jenis</label>
+                  <select :id="`src-label-${src.id}`" x-model="sourceEditForm.label" class="select">
+                    <option value="rangkuman">Rangkuman</option>
+                    <option value="tes_formatif">Tes Formatif</option>
+                    <option value="materi">Materi</option>
+                  </select>
+                </div>
+                <div class="field">
+                  <label :for="`src-title-${src.id}`" class="field-label">Judul halaman</label>
+                  <input :id="`src-title-${src.id}`" type="text" x-model="sourceEditForm.pageTitle" class="input" />
+                </div>
+              </div>
+              <div class="field">
+                <label :for="`src-text-${src.id}`" class="field-label">Teks hasil ekstraksi</label>
+                <textarea :id="`src-text-${src.id}`" rows="10" x-model="sourceEditForm.extractedText" class="textarea"></textarea>
+              </div>
+              <div class="dialog-actions">
+                <button type="button" @click="editingSourceId = null" class="btn btn--ghost">Batal</button>
+                <button
+                  type="button"
+                  @click="saveSourceReview(src.id, true)"
+                  :disabled="savingSourceEdit"
+                  class="btn btn--primary"
+                  x-text="savingSourceEdit ? 'Menyimpan…' : 'Simpan dan verifikasi'"
+                ></button>
+              </div>
+            </div>
+          </article>
+        </template>
+      </div>
+    </section>
+  </div>
+
+  <!-- TAB: STUDY PACK -->
+  <div x-show="moduleTab === 'study'" role="tabpanel" aria-label="Rangkuman" class="stack-xl">
+    <template x-if="!activeStudyPack">
+      <div class="stack-md" style="max-width: 46rem">
+        <h2 class="section-title">Study Pack belum disusun</h2>
+        <p class="lede">
+          Dari halaman yang sudah diverifikasi, AI menyusun intisari per topik, daftar istilah, penjelasan pendamping, dan kuis awal dalam satu permintaan. Membaca ulang tidak memakai kuota AI lagi.
+        </p>
+        <template x-if="unreviewedSourcesCount > 0">
+          <div class="callout">
+            <p>
+              Masih ada <strong class="figure" x-text="unreviewedSourcesCount"></strong> halaman yang belum diverifikasi. Periksa dulu di tab Sumber BMP.
+            </p>
+          </div>
+        </template>
+        <template x-if="(activeModule?.sources?.length || 0) === 0">
+          <div class="callout callout--info"><p>Unggah dan verifikasi halaman BMP terlebih dahulu.</p></div>
+        </template>
+        <div class="cluster">
+          <button
+            type="button"
+            @click="generateStudyPackAndQuiz(false)"
+            :disabled="Boolean(activeAiJob) || unreviewedSourcesCount > 0 || (activeModule?.sources?.length || 0) === 0"
+            class="btn btn--primary"
+          >
+            Susun Bahan Belajar
+          </button>
+        </div>
+      </div>
+    </template>
+
+    <template x-if="activeStudyPack">
+      <div class="stack-xl">
+        <div class="split split--center">
+          <div class="cluster cluster--tight">
+            <label for="study-pack-version" class="label">Versi</label>
+            <select id="study-pack-version" x-model="selectedStudyPackVersion" class="select">
+              <template x-for="sp in activeModule?.studyPacks" :key="sp.id">
+                <option :value="sp.version" x-text="`v${sp.version}, ${formatDateTime(sp.createdAt)}`"></option>
+              </template>
+            </select>
+          </div>
+          <div class="cluster cluster--tight">
+            <button
+              type="button"
+              class="btn btn--ghost"
+              @click="generateStudyPackAndQuiz(true)"
+              :disabled="Boolean(activeAiJob) || unreviewedSourcesCount > 0"
+            >
+              Susun ulang
+            </button>
+            <button type="button" @click="moduleTab = 'quiz'" class="btn btn--primary">Latihan kuis</button>
+          </div>
+        </div>
+
+        <template x-if="unreviewedSourcesCount > 0">
+          <div class="callout">
+            <p>
+              <strong class="figure" x-text="unreviewedSourcesCount"></strong> halaman baru belum diverifikasi dan belum masuk ke rangkuman ini.
+            </p>
+          </div>
+        </template>
+
+        <div class="reader">
+          <nav class="toc" aria-label="Topik dalam rangkuman">
+            <span class="label" style="margin-bottom: var(--space-xs)">Topik</span>
+            <template x-for="(topic, tIdx) in activeStudyPack.summaryJson?.topics || []" :key="tIdx">
+              <a class="toc-link" :href="`#topic-${tIdx}`" x-text="topic.topicLabel"></a>
+            </template>
+            <template x-if="activeStudyPack.summaryJson?.glossary?.length > 0">
+              <a class="toc-link" href="#glossary">Istilah penting</a>
+            </template>
+          </nav>
+
+          <article class="stack-xl">
+            <header class="stack-md">
+              <div class="stack-xs">
+                <div class="cluster cluster--tight">
+                  <span class="tag" style="background: var(--color-surface-2); border-color: var(--color-rule-2)" x-text="`Versi ${activeStudyPack.version}`"></span>
+                  <template x-if="activeStudyPack.summaryJson?.schemaVersion >= 2">
+                    <span class="tag" style="color: var(--color-accent)">Bahan Belajar Lengkap</span>
+                  </template>
+                </div>
+                <h2 class="section-title" style="font-size: var(--text-3xl)" x-text="activeStudyPack.title"></h2>
+              </div>
+              <p class="prose-lead" x-text="activeStudyPack.summaryJson?.overview"></p>
+              <template x-if="activeStudyPack.summaryJson?.moduleLearningObjectives?.length > 0">
+                <div class="topic-objectives">
+                  <span class="label">Capaian Pembelajaran Modul</span>
+                  <ul class="takeaways">
+                    <template x-for="(mlo, mIdx) in activeStudyPack.summaryJson.moduleLearningObjectives" :key="mIdx">
+                      <li x-text="mlo"></li>
+                    </template>
+                  </ul>
+                </div>
+              </template>
+            </header>
+
+            <template x-for="(topic, tIdx) in activeStudyPack.summaryJson?.topics || []" :key="tIdx">
+              <section class="topic" :id="`topic-${tIdx}`">
+                <!-- Header & Source Reference -->
+                <div class="stack-2xs">
+                  <span class="topic-number" x-text="`Topik ${tIdx + 1}`"></span>
+                  <h3 class="section-title" style="font-size: var(--text-2xl)" x-text="topic.topicLabel || topic.title"></h3>
+                  <template x-if="(topic.sourceRefs || []).length">
+                    <p class="meta" x-text="`Sumber BMP: ${(topic.sourceRefs || []).join(', ')}`"></p>
+                  </template>
+                </div>
+
+                <!-- Topic Learning Objectives -->
+                <template x-if="topic.learningObjectives && topic.learningObjectives.length > 0">
+                  <div class="topic-objectives">
+                    <span class="label">Sasaran Pembelajaran Topik</span>
+                    <ul class="takeaways">
+                      <template x-for="(obj, oIdx) in topic.learningObjectives" :key="oIdx">
+                        <li x-text="obj"></li>
+                      </template>
+                    </ul>
+                  </div>
+                </template>
+
+                <!-- Core Concepts -->
+                <template x-if="topic.coreConcepts && topic.coreConcepts.length > 0">
+                  <div class="stack-xs">
+                    <span class="label">Konsep Kunci BMP</span>
+                    <div class="cluster cluster--tight" style="gap: var(--space-xs)">
+                      <template x-for="(cc, cIdx) in topic.coreConcepts" :key="cIdx">
+                        <span class="tag" style="background: var(--color-surface-2); border-color: var(--color-rule-2)" x-text="cc"></span>
+                      </template>
+                    </div>
+                  </div>
+                </template>
+
+                <!-- Detailed Explanation (BMP-Grounded) -->
+                <div class="stack-xs">
+                  <p class="prose" style="white-space: pre-line" x-text="topic.detailedExplanation || topic.bmpSummary"></p>
+                </div>
+
+                <!-- Comparisons & Distinctions -->
+                <template x-if="topic.comparisons && topic.comparisons.length > 0">
+                  <div class="stack-xs" style="margin-top: var(--space-xs)">
+                    <span class="label">Pembeda & Perbandingan Konsep</span>
+                    <div class="ledger" style="border: 1px solid var(--color-rule-2); border-radius: 4px; overflow: hidden">
+                      <template x-for="(cmp, cpIdx) in topic.comparisons" :key="cpIdx">
+                        <div class="ledger-row" style="grid-template-columns: minmax(7rem, 11rem) minmax(7rem, 11rem) minmax(0, 1fr); padding: var(--space-sm) var(--space-md)">
+                          <span class="sub-title" style="font-weight: 500" x-text="cmp.itemA"></span>
+                          <span class="sub-title" style="font-weight: 500; color: var(--color-accent)" x-text="cmp.itemB"></span>
+                          <span class="meta" style="color: var(--color-ink-2)" x-text="cmp.distinction"></span>
+                        </div>
+                      </template>
+                    </div>
+                  </div>
+                </template>
+
+                <!-- Processes & Stages -->
+                <template x-if="topic.processesOrStages && topic.processesOrStages.length > 0">
+                  <div class="stack-xs" style="margin-top: var(--space-xs)">
+                    <span class="label">Alur & Tahapan Prosedur</span>
+                    <div class="stack-xs">
+                      <template x-for="(stg, sIdx) in topic.processesOrStages" :key="sIdx">
+                        <div class="step-node">
+                          <span class="step-node-num" x-text="`Langkah ${stg.stepNumber || sIdx + 1}`"></span>
+                          <div class="stack-2xs">
+                            <strong class="sub-title" style="font-size: var(--text-md)" x-text="stg.name"></strong>
+                            <p class="prose" style="font-size: var(--text-sm)" x-text="stg.description"></p>
+                          </div>
+                        </div>
+                      </template>
+                    </div>
+                  </div>
+                </template>
+
+                <!-- Concept Relationships -->
+                <template x-if="topic.conceptRelationships && topic.conceptRelationships.length > 0">
+                  <div class="stack-xs" style="margin-top: var(--space-xs)">
+                    <span class="label">Keterhubungan Antarkonsep</span>
+                    <ul class="takeaways">
+                      <template x-for="(rel, rIdx) in topic.conceptRelationships" :key="rIdx">
+                        <li>
+                          <strong x-text="`${rel.conceptA} ↔ ${rel.conceptB}: `"></strong>
+                          <span x-text="rel.relationship"></span>
+                        </li>
+                      </template>
+                    </ul>
+                  </div>
+                </template>
+
+                <!-- Concrete Examples -->
+                <template x-if="topic.examples && topic.examples.length > 0">
+                  <div class="stack-xs" style="margin-top: var(--space-xs)">
+                    <span class="label">Contoh Penerapan</span>
+                    <div class="stack-xs">
+                      <template x-for="(ex, eIdx) in topic.examples" :key="eIdx">
+                        <div class="ai-note" style="border-left-color: var(--color-rule-2)">
+                          <div class="cluster cluster--tight">
+                            <strong class="label" style="text-transform: none" x-text="ex.context"></strong>
+                            <template x-if="ex.isAiGenerated">
+                              <span class="tag" style="font-size: var(--text-xs)">Ilustrasi Tambahan AI</span>
+                            </template>
+                          </div>
+                          <p class="prose" style="font-size: var(--text-sm)" x-text="ex.illustration"></p>
+                        </div>
+                      </template>
+                    </div>
+                  </div>
+                </template>
+
+                <!-- Common Misconceptions -->
+                <template x-if="topic.commonMisconceptions && topic.commonMisconceptions.length > 0">
+                  <div class="callout callout--info" style="margin-top: var(--space-xs)">
+                    <span class="label" style="color: var(--color-accent)">Miskonsepsi Umum & Koreksi</span>
+                    <div class="stack-xs" style="margin-top: var(--space-2xs)">
+                      <template x-for="(misc, mIdx) in topic.commonMisconceptions" :key="mIdx">
+                        <div class="stack-2xs">
+                          <p class="meta" style="color: var(--color-ink-2)">
+                            <strong>Kekeliruan:</strong> <span x-text="misc.misconception"></span>
+                          </p>
+                          <p class="meta" style="color: var(--color-ink)">
+                            <strong>Klarifikasi BMP:</strong> <span x-text="misc.correction"></span>
+                          </p>
+                        </div>
+                      </template>
+                    </div>
+                  </div>
+                </template>
+
+                <!-- AI Supplementary Explanation -->
+                <template x-if="topic.aiExplanation">
+                  <aside class="ai-note">
+                    <span class="label">Penjelasan Pendamping AI — Analogi & Pemahaman Konsep</span>
+                    <p class="prose" x-text="topic.aiExplanation"></p>
+                  </aside>
+                </template>
+
+                <!-- Key Takeaways -->
+                <template x-if="topic.keyTakeaways && topic.keyTakeaways.length > 0">
+                  <div class="stack-xs" style="margin-top: var(--space-xs)">
+                    <span class="label">Poin Kunci</span>
+                    <ul class="takeaways">
+                      <template x-for="(pt, pIdx) in topic.keyTakeaways" :key="pIdx">
+                        <li x-text="pt"></li>
+                      </template>
+                    </ul>
+                  </div>
+                </template>
+              </section>
+            </template>
+
+            <template x-if="activeStudyPack.summaryJson?.glossary?.length > 0">
+              <section id="glossary" class="stack-md">
+                <h3 class="section-title">Istilah penting</h3>
+                <dl class="glossary">
+                  <template x-for="(g, gIdx) in activeStudyPack.summaryJson.glossary" :key="gIdx">
+                    <div>
+                      <dt x-text="g.term"></dt>
+                      <dd>
+                        <p x-text="g.bmpDefinition"></p>
+                        <p x-show="g.simpleAnalogy" class="meta">
+                          <strong>Analogi AI:</strong> <span x-text="g.simpleAnalogy"></span>
+                        </p>
+                      </dd>
+                    </div>
+                  </template>
+                </dl>
+              </section>
+            </template>
+          </article>
+        </div>
+      </div>
+    </template>
+  </div>
+
+  <!-- TAB: QUIZZES & REMEDIAL -->
+  <div x-show="moduleTab === 'quiz'" role="tabpanel" aria-label="Kuis" class="stack-md">
+    <div class="split">
+      <div class="stack-2xs">
+        <h2 class="section-title">Latihan dan remedial</h2>
+        <p class="lede">Kunci jawaban disembunyikan selama mengerjakan dan dinilai di server setelah Anda mengumpulkan.</p>
+      </div>
+      <template x-if="(activeModule?.studyPacks?.length || 0) > 0">
+        <div class="cluster cluster--tight">
+          <select x-model="practiceQuestionCount" class="select" aria-label="Jumlah soal latihan">
+            <option value="5">5 soal</option>
+            <option value="10">10 soal (Standar)</option>
+            <option value="15">15 soal</option>
+            <option value="20">20 soal (Latihan Intensif)</option>
+          </select>
+          <button type="button" @click="generateExtraPracticeSet()" :disabled="Boolean(activeAiJob)" class="btn">
+            Buat latihan adaptif
+          </button>
+        </div>
+      </template>
+    </div>
+
+    <template x-if="!activeModule?.questionSets || activeModule.questionSets.length === 0">
+      <div class="empty">
+        <p class="sub-title">Tidak ada kuis aktif</p>
+        <p class="lede">
+          Seluruh kuis yang sudah Anda kerjakan telah dievaluasi dan tersimpan di tab <strong>Progres</strong>. Buat latihan adaptif baru di atas untuk terus mengasah pemahaman.
+        </p>
+        <template x-if="(activeModule?.studyPacks?.length || 0) === 0">
+          <button type="button" @click="moduleTab = 'study'" class="btn">Ke rangkuman</button>
+        </template>
+      </div>
+    </template>
+
+    <div class="ledger" x-show="(activeModule?.questionSets?.length || 0) > 0">
+      <template x-for="qs in activeModule?.questionSets || []" :key="qs.id">
+        <article class="ledger-row ledger-row--link row-anchor" style="grid-template-columns: minmax(0, 1fr) auto">
+          <div class="stack-2xs">
+            <div class="cluster cluster--tight">
+              <span class="tag" x-text="setTypeLabel(qs.setType)"></span>
+              <span class="meta" x-text="formatDateTime(qs.createdAt)"></span>
+            </div>
+            <h3 class="sub-title" style="font-weight: 400">
+              <button type="button" class="row-title" style="font-size: var(--text-lg)" @click="startQuiz(qs.id)" x-text="qs.title"></button>
+            </h3>
+            <template x-if="qs.metadataJson?.diagnosticFeedback?.overallDiagnosis">
+              <p class="meta" style="max-width: 70ch" x-text="`Fokus: ${qs.metadataJson.diagnosticFeedback.overallDiagnosis}`"></p>
+            </template>
+          </div>
+          <span class="meta" aria-hidden="true">Kerjakan</span>
+        </article>
+      </template>
+    </div>
+  </div>
+
+  <!-- TAB: PROGRESS -->
+  <div x-show="moduleTab === 'progress'" role="tabpanel" aria-label="Progres" class="stack-xl">
+    <dl class="figures">
+      <div>
+        <dt class="label">Kuis dikerjakan</dt>
+        <dd class="figure-value" x-text="moduleProgress?.attemptCount ?? 0"></dd>
+      </div>
+      <div>
+        <dt class="label">Skor terakhir</dt>
+        <dd
+          :class="moduleProgress?.latestScore != null ? 'figure-value' : 'figure-value figure-value--none'"
+          x-text="moduleProgress?.latestScore != null ? `${moduleProgress.latestScore}%` : 'Belum ada'"
+        ></dd>
+      </div>
+      <div>
+        <dt class="label">Rata-rata skor</dt>
+        <dd
+          :class="moduleProgress?.averageScore != null ? 'figure-value' : 'figure-value figure-value--none'"
+          x-text="moduleProgress?.averageScore != null ? `${moduleProgress.averageScore}%` : 'Belum ada'"
+        ></dd>
+      </div>
+      <div>
+        <dt class="label">Topik lemah</dt>
+        <dd class="figure-value" x-text="moduleProgress?.weakTopics?.length ?? 0"></dd>
+      </div>
+    </dl>
+
+    <section class="stack-md" aria-labelledby="topic-mastery-heading">
+      <div class="stack-2xs">
+        <h2 id="topic-mastery-heading" class="section-title">Penguasaan per topik</h2>
+        <p class="lede">Akurasi dari semua jawaban pada soal modul ini. Di bawah 75% ditandai perlu diperkuat.</p>
+      </div>
+      <template x-if="!moduleProgress?.topicProgress || moduleProgress.topicProgress.length === 0">
+        <p class="meta">Kerjakan minimal satu kuis untuk melihat penguasaan per topik.</p>
+      </template>
+      <div class="ledger" x-show="(moduleProgress?.topicProgress?.length || 0) > 0">
+        <template x-for="tp in moduleProgress?.topicProgress || []" :key="tp.topicLabel">
+          <div class="ledger-row" style="grid-template-columns: minmax(0, 1fr) minmax(6rem, 12rem) 7rem">
+            <span class="sub-title" style="font-weight: 400" x-text="tp.topicLabel"></span>
+            <div class="meter meter--thin" role="img" :aria-label="`Akurasi ${tp.accuracyPercent}%`">
+              <div
+                :class="tp.accuracyPercent >= 75 ? 'meter-seg meter-seg--mastered' : 'meter-seg meter-seg--review'"
+                :style="`width: ${tp.accuracyPercent}%`"
+              ></div>
+            </div>
+            <span class="meta" style="text-align: right">
+              <strong class="figure" x-text="`${tp.accuracyPercent}%`"></strong>
+              <span class="figure" x-text="`${tp.correctCount}/${tp.answeredCount}`"></span>
+            </span>
+          </div>
+        </template>
+      </div>
+    </section>
+
+    <section class="stack-md" aria-labelledby="attempt-history-heading">
+      <h2 id="attempt-history-heading" class="section-title">Riwayat pengerjaan</h2>
+      <template x-if="!moduleProgress?.attempts || moduleProgress.attempts.length === 0">
+        <p class="meta">Belum ada kuis yang dikumpulkan.</p>
+      </template>
+      <div class="ledger" x-show="(moduleProgress?.attempts?.length || 0) > 0">
+        <template x-for="att in moduleProgress?.attempts || []" :key="att.id">
+          <div class="ledger-row" style="grid-template-columns: minmax(0, 1fr) auto auto">
+            <div class="stack-2xs">
+              <span class="sub-title" x-text="att.questionSetTitle"></span>
+              <span class="meta" x-text="formatDateTime(att.submittedAt)"></span>
+            </div>
+            <span :class="scoreStateClass(att.score)">
+              <span class="figure" x-text="`${att.score}%`"></span>
+              <span class="meta figure" x-text="`${att.correctCount}/${att.totalCount}`"></span>
+            </span>
+            <button type="button" @click="openAttemptReview(att.id)" class="btn btn--ghost btn--sm">Pembahasan</button>
+          </div>
+        </template>
+      </div>
+    </section>
+  </div>
+</section>

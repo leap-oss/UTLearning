@@ -7,6 +7,7 @@ import {
   sourceAssets,
   studyPacks,
   questionSets,
+  quizAttempts,
 } from '../db/schema.js';
 
 export const MODULE_STATUSES = ['empty', 'in_progress', 'needs_review', 'mastered'];
@@ -379,7 +380,7 @@ export async function createModule(courseId, input) {
 export async function getModuleDetail(moduleId) {
   const db = getDb();
 
-  const [modCourseRows, sources, packs, qSets] = await Promise.all([
+  const [modCourseRows, sources, packs, allQSets, submittedAttempts] = await Promise.all([
     db
       .select({
         mod: modules,
@@ -404,6 +405,11 @@ export async function getModuleDetail(moduleId) {
       .from(questionSets)
       .where(eq(questionSets.moduleId, moduleId))
       .orderBy(desc(questionSets.createdAt)),
+    db
+      .select({ questionSetId: quizAttempts.questionSetId })
+      .from(quizAttempts)
+      .innerJoin(questionSets, eq(quizAttempts.questionSetId, questionSets.id))
+      .where(and(eq(questionSets.moduleId, moduleId), eq(quizAttempts.status, 'submitted'))),
   ]);
 
   if (modCourseRows.length === 0) {
@@ -411,13 +417,17 @@ export async function getModuleDetail(moduleId) {
   }
 
   const { mod, course } = modCourseRows[0];
+  const submittedSetIds = new Set(submittedAttempts.map((a) => a.questionSetId));
+
+  // Filter out question sets that have already been submitted so the active quiz tab stays uncluttered
+  const activeQSets = allQSets.filter((qs) => !submittedSetIds.has(qs.id));
 
   return {
     ...mod,
     course: course || null,
     sources,
     studyPacks: packs,
-    questionSets: qSets,
+    questionSets: activeQSets,
   };
 }
 

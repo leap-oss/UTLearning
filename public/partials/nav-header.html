@@ -1,0 +1,68 @@
+<!-- ==================== TOP BAR ==================== -->
+<header class="topbar">
+  <div class="topbar-inner">
+    <button type="button" class="wordmark" @click="backToDashboard()" aria-label="UT AI Learning Companion, ke perpustakaan kuliah">
+      <span>UT Learning</span>
+      <span class="wordmark-sub">pendamping belajar BMP</span>
+    </button>
+
+    <nav class="nav" aria-label="Navigasi utama">
+      <button
+        type="button"
+        class="nav-link"
+        @click="backToDashboard()"
+        :aria-current="currentView !== 'system' ? 'page' : null"
+      >
+        Perpustakaan
+      </button>
+      <button
+        type="button"
+        class="nav-link"
+        @click="currentView = 'system'; refreshSystemStatus()"
+        :aria-current="currentView === 'system' ? 'page' : null"
+      >
+        <span
+          :class="health?.status === 'ok' && health?.database?.connected ? 'state state--ok' : 'state state--review'"
+          aria-hidden="true"
+        ></span>
+        <span>Status sistem</span>
+        <span
+          class="visually-hidden"
+          x-text="health?.status === 'ok' && health?.database?.connected ? '(siap)' : '(perlu diperiksa)'"
+        ></span>
+      </button>
+    </nav>
+  </div>
+</header>
+
+<!-- ==================== FEEDBACK (toasts) ==================== -->
+<div class="toast-region">
+  <template x-if="activeAiJob">
+    <div class="toast toast--job" role="status" aria-live="polite">
+      <div class="stack-2xs">
+        <div class="cluster cluster--tight">
+          <span class="spinner keep-motion" aria-hidden="true"></span>
+          <span class="sub-title" x-text="activeAiJob.label"></span>
+        </div>
+        <p class="meta">
+          Status <span class="figure" x-text="activeAiJob.status"></span>, percobaan
+          <span class="figure" x-text="`${activeAiJob.attemptCount || 1}/${activeAiJob.maxAttempts || 3}`"></span>
+        </p>
+      </div>
+    </div>
+  </template>
+
+  <template x-if="noticeMessage">
+    <div class="toast" role="status" aria-live="polite">
+      <span x-text="noticeMessage"></span>
+      <button type="button" @click="noticeMessage = null" class="btn btn--ghost btn--sm">Tutup</button>
+    </div>
+  </template>
+
+  <template x-if="errorMessage">
+    <div class="toast toast--bad" role="alert">
+      <span x-text="errorMessage"></span>
+      <button type="button" @click="errorMessage = null" class="btn btn--ghost btn--sm">Tutup</button>
+    </div>
+  </template>
+</div>

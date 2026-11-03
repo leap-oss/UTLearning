@@ -66,7 +66,7 @@ export const remedialBatchOutputSchema = z.object({
       )
       .min(1),
   }),
-  remedialQuestions: z.array(mcqQuestionSchema).min(1).max(15),
+  remedialQuestions: z.array(mcqQuestionSchema).min(1).max(25),
 });
 
 export const REMEDIAL_BATCH_JSON_SCHEMA = {
@@ -224,6 +224,8 @@ export async function getQuestionSetWithoutAnswerKey(questionSetId) {
       moduleId: questions.moduleId,
       questionOrder: questions.questionOrder,
       topicLabel: questions.topicLabel,
+      learningObjective: questions.learningObjective,
+      questionType: questions.questionType,
       prompt: questions.prompt,
       optionsJson: questions.optionsJson,
       difficulty: questions.difficulty,
@@ -254,6 +256,8 @@ export async function getQuestionSetWithoutAnswerKey(questionSetId) {
       moduleId: q.moduleId,
       questionOrder: q.questionOrder,
       topicLabel: q.topicLabel,
+      learningObjective: q.learningObjective || `Memahami ${q.topicLabel}`,
+      questionType: q.questionType || 'single_choice',
       prompt: q.prompt,
       options: q.optionsJson,
       difficulty: q.difficulty,
@@ -283,18 +287,50 @@ async function evaluateAndUpdateModuleStatus(tx, moduleId) {
   if (attempts.length === 0) return;
 
   const latestAttempt = attempts[0];
+
+  // Inspect topic-level performance to ensure full learning objective coverage
+  const modQuestions = await tx
+    .select()
+    .from(questions)
+    .where(eq(questions.moduleId, moduleId));
+
+  const modQuestionIds = modQuestions.map((q) => q.id);
+  let answers = [];
+  if (modQuestionIds.length > 0) {
+    answers = await tx
+      .select()
+      .from(attemptAnswers)
+      .where(inArray(attemptAnswers.questionId, modQuestionIds));
+  }
+
+  const topicMap = new Map();
+  for (const ans of answers) {
+    const q = modQuestions.find((q) => q.id === ans.questionId);
+    if (!q) continue;
+    const entry = topicMap.get(q.topicLabel) || { correct: 0, total: 0 };
+    entry.total += 1;
+    if (ans.isCorrect) entry.correct += 1;
+    topicMap.set(q.topicLabel, entry);
+  }
+
+  const weakTopics = Array.from(topicMap.values()).filter(
+    (t) => t.total > 0 && Math.round((t.correct / t.total) * 100) < 80
+  );
+
   const distinctSetsPassed = new Set(
     attempts.filter((a) => a.score >= 80).map((a) => a.questionSetId)
   );
 
-  // Mastery rule (Section 2): minimum score >= 80 on more than one distinct question set
-  // (or >= 2 attempts with latest >= 80 and average >= 80), never locking other modules.
+  // Mastery rule:
+  // - Re-open remediation if any topic has unresolved weak performance (<80%)
+  // - Minimum score >= 80% on latest attempt and on >= 2 distinct question sets
+  // - All tested topics must have >= 80% aggregate accuracy
   let nextStatus = 'in_progress';
-  if (latestAttempt.score < 70) {
+  if (latestAttempt.score < 75 || weakTopics.length > 0) {
     nextStatus = 'needs_review';
-  } else if (distinctSetsPassed.size >= 2 && latestAttempt.score >= 80) {
+  } else if (distinctSetsPassed.size >= 2 && latestAttempt.score >= 80 && weakTopics.length === 0) {
     nextStatus = 'mastered';
-  } else if (attempts.length >= 2 && latestAttempt.score >= 85 && attempts[1].score >= 80) {
+  } else if (attempts.length >= 2 && latestAttempt.score >= 85 && attempts[1].score >= 80 && weakTopics.length === 0) {
     nextStatus = 'mastered';
   }
 
@@ -380,6 +416,11 @@ export async function submitQuizAttempt(questionSetId, rawPayload) {
   const now = new Date();
 
   const savedAttempt = await db.transaction(async (tx) => {
+    // Check if there was an in_progress draft to resolve
+    await tx
+      .delete(quizAttempts)
+      .where(and(eq(quizAttempts.questionSetId, questionSetId), eq(quizAttempts.status, 'in_progress')));
+
     const [attempt] = await tx
       .insert(quizAttempts)
       .values({
@@ -390,6 +431,7 @@ export async function submitQuizAttempt(questionSetId, rawPayload) {
         correctCount,
         totalCount,
         status: 'submitted',
+        answersJson: payload.answers,
       })
       .returning();
 
@@ -411,6 +453,45 @@ export async function submitQuizAttempt(questionSetId, rawPayload) {
   });
 
   return getAttemptReviewById(savedAttempt.id);
+}
+
+export async function saveQuizDraft(questionSetId, { selections = {} } = {}) {
+  const db = getDb();
+  const now = new Date();
+
+  const [existingDraft] = await db
+    .select()
+    .from(quizAttempts)
+    .where(and(eq(quizAttempts.questionSetId, questionSetId), eq(quizAttempts.status, 'in_progress')))
+    .limit(1);
+
+  if (existingDraft) {
+    const [updated] = await db
+      .update(quizAttempts)
+      .set({
+        answersJson: selections,
+        startedAt: now,
+      })
+      .where(eq(quizAttempts.id, existingDraft.id))
+      .returning();
+    return updated;
+  }
+
+  const [created] = await db
+    .insert(quizAttempts)
+    .values({
+      questionSetId,
+      startedAt: now,
+      submittedAt: null,
+      score: 0,
+      correctCount: 0,
+      totalCount: 0,
+      status: 'in_progress',
+      answersJson: selections,
+    })
+    .returning();
+
+  return created;
 }
 
 export async function getAttemptReviewById(attemptId) {
@@ -498,6 +579,8 @@ export async function getAttemptReviewById(attemptId) {
       moduleNumber: modInfo?.moduleNumber ?? null,
       moduleTitle: modInfo?.title ?? null,
       topicLabel: q.topicLabel,
+      learningObjective: q.learningObjective || `Memahami ${q.topicLabel}`,
+      questionType: q.questionType || 'single_choice',
       prompt: q.prompt,
       options: q.optionsJson,
       selectedOption: ans?.selectedOption || null,
@@ -551,19 +634,26 @@ export async function defaultRemedialGenerator({
   attemptReview,
   wrongQuestions,
   relevantTopicsContext,
+  questionCount = null,
 }) {
-  const systemInstruction = `Anda adalah tutor diagnostik Universitas Terbuka berbasis sumber BMP.
+  const targetCount = questionCount
+    ? Math.min(20, Math.max(2, Number(questionCount)))
+    : Math.min(10, Math.max(wrongQuestions.length * 2, 5));
+
+  const systemInstruction = `Anda adalah tutor diagnostik adaptif Universitas Terbuka berbasis materi BMP yang telah diverifikasi.
 Tugas Anda:
-1. Analisis semua jawaban salah mahasiswa secara bersamaan (batched diagnostic).
-2. Jelaskan letak miskonsepsi konsep berdasarkan materi BMP (bukan sekadar menyebut benar/salah).
-3. Buat ${Math.min(5, Math.max(2, wrongQuestions.length))} soal remedial pilihan ganda baru dengan konteks/skenario berbeda tetapi menguji topik/kompetensi yang salah tersebut.
-4. Sertakan "sourceRefs" pada setiap soal dan analisis topik.`;
+1. Analisis seluruh jawaban salah mahasiswa secara terfokus pada learning objective dan letak miskonsepsi konsep.
+2. Rancang ${targetCount} soal remedial pilihan ganda baru (4 opsi: A, B, C, D) yang menguji learning objective yang sama dari topik yang salah, namun dengan skenario/distraktor/konteks baru yang berbeda (JANGAN mengulang kalimat soal asli).
+3. Sertakan "learningObjective", "questionType" ('scenario_based', 'conceptual_application', 'single_choice'), tingkat "difficulty", dan "sourceRefs" pada setiap soal.`;
 
   const prompt = `Hasil Pengerjaan Kuis: Skor ${attemptReview.score}% (${attemptReview.correctCount}/${attemptReview.totalCount})
+Target Jumlah Soal Remedial: ${targetCount}
+
 Daftar Soal yang Dijawab Salah oleh Mahasiswa:
 ${JSON.stringify(
   wrongQuestions.map((wq) => ({
     topicLabel: wq.topicLabel,
+    learningObjective: wq.learningObjective || `Memahami ${wq.topicLabel}`,
     prompt: wq.prompt,
     options: wq.options,
     studentSelectedOption: wq.selectedOption,
@@ -578,7 +668,7 @@ ${JSON.stringify(
 Konteks Topik Materi BMP Terkait:
 ${JSON.stringify(relevantTopicsContext, null, 2)}
 
-Hasilkan umpan balik diagnostik dan soal remedial dalam JSON.`;
+Hasilkan umpan balik diagnostik dan soal remedial baru dalam JSON.`;
 
   return generateStructuredContent({
     taskType: 'generate_remedial',
@@ -586,12 +676,14 @@ Hasilkan umpan balik diagnostik dan soal remedial dalam JSON.`;
     systemInstruction,
     responseSchema: REMEDIAL_BATCH_JSON_SCHEMA,
     zodSchema: remedialBatchOutputSchema,
+    enableGoogleSearch: true,
   });
 }
 
 export async function enqueueRemedialGeneration({
   attemptId,
   idempotencyKey,
+  questionCount = null,
   regenerate = false,
   overrideBudget = false,
   aiQueue,
@@ -616,6 +708,7 @@ export async function enqueueRemedialGeneration({
     throw err;
   }
 
+  const boundedQuestionCount = questionCount ? Math.min(20, Math.max(2, Number(questionCount))) : null;
   const config = getEnvConfig();
   const model = config.geminiModel || 'gemini-2.5-flash';
 
@@ -626,9 +719,10 @@ export async function enqueueRemedialGeneration({
     inputChecksum: computeSha256({
       attemptId,
       wrongIds: wrongQuestions.map((w) => w.questionId),
+      boundedQuestionCount,
     }),
     model,
-    promptVersion: 'remedial-v1',
+    promptVersion: 'remedial-v2',
     schemaVersion: 1,
   });
 
@@ -660,6 +754,7 @@ export async function enqueueRemedialGeneration({
       attemptReview,
       wrongQuestions,
       relevantTopicsContext,
+      questionCount: boundedQuestionCount,
     });
 
     const parsed = remedialBatchOutputSchema.parse(aiResponse.data);
@@ -690,6 +785,8 @@ export async function enqueueRemedialGeneration({
         moduleId: attemptReview.moduleId,
         questionOrder: idx + 1,
         topicLabel: q.topicLabel,
+        learningObjective: q.learningObjective || `Remediasi ${q.topicLabel}`,
+        questionType: q.questionType || 'conceptual_application',
         prompt: q.prompt,
         optionsJson: q.options,
         correctOption: q.correctOption,
@@ -826,7 +923,7 @@ export async function enqueueCourseExamSimulation({
     throw err;
   }
 
-  const boundedQuestionCount = Math.min(25, Math.max(4, Number(questionCount) || 10));
+  const boundedQuestionCount = Math.min(60, Math.max(4, Number(questionCount) || 10));
   const validDifficulty = ['easy', 'medium', 'hard', 'mixed'].includes(difficulty)
     ? difficulty
     : 'mixed';
@@ -919,6 +1016,8 @@ export async function enqueueCourseExamSimulation({
           moduleId: matchedMod.id,
           questionOrder: idx + 1,
           topicLabel: q.topicLabel,
+          learningObjective: q.learningObjective || `Memahami ${q.topicLabel}`,
+          questionType: q.questionType || 'scenario_based',
           prompt: q.prompt,
           optionsJson: q.options,
           correctOption: q.correctOption,

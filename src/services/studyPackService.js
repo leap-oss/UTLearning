@@ -60,6 +60,22 @@ export const mcqQuestionSchema = z
       .optional()
       .default('Konsep Utama Modul')
       .transform((s) => (s && s.trim() ? s.trim() : 'Konsep Utama Modul')),
+    learningObjective: z
+      .string()
+      .optional()
+      .default('Memahami konsep utama modul')
+      .transform((s) => (s && s.trim() ? s.trim() : 'Memahami konsep utama modul')),
+    questionType: z
+      .string()
+      .optional()
+      .default('single_choice')
+      .transform((s) => {
+        const val = String(s || '').toLowerCase().trim();
+        if (['single_choice', 'multiple_choice', 'true_false', 'conceptual_application', 'scenario_based'].includes(val)) {
+          return val;
+        }
+        return 'single_choice';
+      }),
     prompt: z.string().trim().min(3, 'Pertanyaan terlalu pendek.'),
     options: z
       .array(
@@ -128,37 +144,107 @@ export const mcqQuestionSchema = z
     };
   });
 
+export const topicLearningMaterialSchema = z
+  .object({
+    topicLabel: z
+      .string()
+      .optional()
+      .default('Topik Utama')
+      .transform((s) => (s && s.trim() ? s.trim() : 'Topik Utama')),
+    title: z.string().trim().optional(),
+    learningObjectives: z.array(z.string().trim()).optional().default([]),
+    sourceRefs: sourceRefsSchema,
+    coreConcepts: z.array(z.string().trim()).optional().default([]),
+    bmpSummary: z
+      .string()
+      .optional()
+      .default('')
+      .transform((s) => (s && s.trim() ? s.trim() : '')),
+    detailedExplanation: z
+      .string()
+      .optional()
+      .default('')
+      .transform((s) => (s && s.trim() ? s.trim() : '')),
+    conceptRelationships: z
+      .array(
+        z.object({
+          conceptA: z.string().trim().min(1),
+          conceptB: z.string().trim().min(1),
+          relationship: z.string().trim().min(1),
+        })
+      )
+      .optional()
+      .default([]),
+    comparisons: z
+      .array(
+        z.object({
+          itemA: z.string().trim().min(1),
+          itemB: z.string().trim().min(1),
+          distinction: z.string().trim().min(1),
+        })
+      )
+      .optional()
+      .default([]),
+    processesOrStages: z
+      .array(
+        z.object({
+          stepNumber: z.number().int().optional().default(1),
+          name: z.string().trim().min(1),
+          description: z.string().trim().min(1),
+        })
+      )
+      .optional()
+      .default([]),
+    examples: z
+      .array(
+        z.object({
+          context: z.string().trim().min(1),
+          illustration: z.string().trim().min(1),
+          isAiGenerated: z.boolean().optional().default(false),
+        })
+      )
+      .optional()
+      .default([]),
+    commonMisconceptions: z
+      .array(
+        z.object({
+          misconception: z.string().trim().min(1),
+          correction: z.string().trim().min(1),
+        })
+      )
+      .optional()
+      .default([]),
+    keyTakeaways: z.array(z.string().trim()).optional().default([]),
+    aiExplanation: z.string().trim().optional().default(''),
+  })
+  .transform((t) => {
+    const detailed =
+      t.detailedExplanation || t.bmpSummary || 'Uraian materi konsep dari sumber BMP.';
+    const summary =
+      t.bmpSummary || t.detailedExplanation || 'Intisari konsep dari sumber BMP.';
+    return {
+      ...t,
+      topicLabel: t.topicLabel || t.title || 'Topik Utama',
+      title: t.title || t.topicLabel || 'Topik Utama',
+      bmpSummary: summary,
+      detailedExplanation: detailed,
+    };
+  });
+
 export const studyPackSynthesisSchema = z.object({
-  schemaVersion: z.number().int().optional().default(1),
+  schemaVersion: z.number().int().optional().default(2),
   title: z
     .string()
     .optional()
-    .default('Study Pack Modul')
-    .transform((s) => (s && s.trim().length >= 2 ? s.trim() : 'Study Pack Modul')),
+    .default('Materi Belajar Modul')
+    .transform((s) => (s && s.trim().length >= 2 ? s.trim() : 'Materi Belajar Modul')),
   overview: z
     .string()
     .optional()
     .default('Ringkasan materi modul BMP.')
     .transform((s) => (s && s.trim().length > 0 ? s.trim() : 'Ringkasan materi modul BMP.')),
-  topics: z
-    .array(
-      z.object({
-        topicLabel: z
-          .string()
-          .optional()
-          .default('Topik Utama')
-          .transform((s) => (s && s.trim() ? s.trim() : 'Topik Utama')),
-        bmpSummary: z
-          .string()
-          .optional()
-          .default('')
-          .transform((s) => (s && s.trim() ? s.trim() : 'Intisari konsep dari sumber BMP.')),
-        aiExplanation: z.string().trim().optional().default(''),
-        keyTakeaways: z.array(z.string()).optional().default([]),
-        sourceRefs: sourceRefsSchema,
-      })
-    )
-    .min(1),
+  moduleLearningObjectives: z.array(z.string().trim()).optional().default([]),
+  topics: z.array(topicLearningMaterialSchema).min(1),
   glossary: z
     .array(
       z.object({
@@ -205,17 +291,87 @@ export const STUDY_PACK_SYNTHESIS_JSON_SCHEMA = {
     schemaVersion: { type: 'INTEGER' },
     title: { type: 'STRING' },
     overview: { type: 'STRING' },
+    moduleLearningObjectives: { type: 'ARRAY', items: { type: 'STRING' } },
     topics: {
       type: 'ARRAY',
       items: {
         type: 'OBJECT',
-        required: ['topicLabel', 'bmpSummary', 'aiExplanation', 'keyTakeaways', 'sourceRefs'],
+        required: [
+          'topicLabel',
+          'bmpSummary',
+          'detailedExplanation',
+          'coreConcepts',
+          'keyTakeaways',
+          'sourceRefs',
+        ],
         properties: {
           topicLabel: { type: 'STRING' },
-          bmpSummary: { type: 'STRING' },
-          aiExplanation: { type: 'STRING' },
-          keyTakeaways: { type: 'ARRAY', items: { type: 'STRING' } },
+          learningObjectives: { type: 'ARRAY', items: { type: 'STRING' } },
           sourceRefs: { type: 'ARRAY', items: { type: 'STRING' } },
+          coreConcepts: { type: 'ARRAY', items: { type: 'STRING' } },
+          bmpSummary: { type: 'STRING' },
+          detailedExplanation: { type: 'STRING' },
+          conceptRelationships: {
+            type: 'ARRAY',
+            items: {
+              type: 'OBJECT',
+              required: ['conceptA', 'conceptB', 'relationship'],
+              properties: {
+                conceptA: { type: 'STRING' },
+                conceptB: { type: 'STRING' },
+                relationship: { type: 'STRING' },
+              },
+            },
+          },
+          comparisons: {
+            type: 'ARRAY',
+            items: {
+              type: 'OBJECT',
+              required: ['itemA', 'itemB', 'distinction'],
+              properties: {
+                itemA: { type: 'STRING' },
+                itemB: { type: 'STRING' },
+                distinction: { type: 'STRING' },
+              },
+            },
+          },
+          processesOrStages: {
+            type: 'ARRAY',
+            items: {
+              type: 'OBJECT',
+              required: ['name', 'description'],
+              properties: {
+                stepNumber: { type: 'INTEGER' },
+                name: { type: 'STRING' },
+                description: { type: 'STRING' },
+              },
+            },
+          },
+          examples: {
+            type: 'ARRAY',
+            items: {
+              type: 'OBJECT',
+              required: ['context', 'illustration'],
+              properties: {
+                context: { type: 'STRING' },
+                illustration: { type: 'STRING' },
+                isAiGenerated: { type: 'BOOLEAN' },
+              },
+            },
+          },
+          commonMisconceptions: {
+            type: 'ARRAY',
+            items: {
+              type: 'OBJECT',
+              required: ['misconception', 'correction'],
+              properties: {
+                misconception: { type: 'STRING' },
+                correction: { type: 'STRING' },
+              },
+            },
+          },
+          keyTakeaways: { type: 'ARRAY', items: { type: 'STRING' } },
+          aiExplanation: { type: 'STRING' },
         },
       },
     },
@@ -252,9 +408,30 @@ export const STUDY_PACK_SYNTHESIS_JSON_SCHEMA = {
       type: 'ARRAY',
       items: {
         type: 'OBJECT',
-        required: ['topicLabel', 'prompt', 'options', 'correctOption', 'explanation', 'difficulty', 'sourceRefs'],
+        required: [
+          'topicLabel',
+          'learningObjective',
+          'questionType',
+          'prompt',
+          'options',
+          'correctOption',
+          'explanation',
+          'difficulty',
+          'sourceRefs',
+        ],
         properties: {
           topicLabel: { type: 'STRING' },
+          learningObjective: { type: 'STRING' },
+          questionType: {
+            type: 'STRING',
+            enum: [
+              'single_choice',
+              'multiple_choice',
+              'true_false',
+              'conceptual_application',
+              'scenario_based',
+            ],
+          },
           prompt: { type: 'STRING' },
           options: {
             type: 'ARRAY',
@@ -276,6 +453,78 @@ export const STUDY_PACK_SYNTHESIS_JSON_SCHEMA = {
     },
   },
 };
+
+export function validateAndAlignStudyPack(parsed, reviewedSources = []) {
+  if (!parsed || !Array.isArray(parsed.topics)) {
+    return parsed;
+  }
+
+  const topicMap = new Map();
+  for (const t of parsed.topics) {
+    if (t.topicLabel) {
+      topicMap.set(t.topicLabel.toLowerCase().trim(), t);
+    }
+  }
+
+  const validSourcePages = (reviewedSources || []).map((s) => `Halaman ${s.pageOrder}`);
+  const fallbackSourceRef =
+    validSourcePages.length > 0 ? [validSourcePages[0]] : ['Sumber Modul BMP'];
+
+  for (const t of parsed.topics) {
+    if (!t.sourceRefs || t.sourceRefs.length === 0) {
+      t.sourceRefs = fallbackSourceRef;
+    }
+    if (!t.learningObjectives) t.learningObjectives = [];
+    if (!t.coreConcepts) t.coreConcepts = [];
+    if (!t.conceptRelationships) t.conceptRelationships = [];
+    if (!t.comparisons) t.comparisons = [];
+    if (!t.processesOrStages) t.processesOrStages = [];
+    if (!t.examples) t.examples = [];
+    if (!t.commonMisconceptions) t.commonMisconceptions = [];
+    if (!t.keyTakeaways) t.keyTakeaways = [];
+  }
+
+  if (Array.isArray(parsed.initialQuestions)) {
+    for (const q of parsed.initialQuestions) {
+      const qTopicNorm = (q.topicLabel || '').toLowerCase().trim();
+      let matchedTopic = topicMap.get(qTopicNorm);
+
+      if (!matchedTopic) {
+        matchedTopic = parsed.topics.find(
+          (t) =>
+            t.topicLabel.toLowerCase().includes(qTopicNorm) ||
+            qTopicNorm.includes(t.topicLabel.toLowerCase())
+        );
+      }
+
+      if (!matchedTopic && parsed.topics.length > 0) {
+        matchedTopic = parsed.topics[0];
+        q.topicLabel = matchedTopic.topicLabel;
+      }
+
+      if (matchedTopic) {
+        if (q.learningObjective && !matchedTopic.learningObjectives.includes(q.learningObjective)) {
+          matchedTopic.learningObjectives.push(q.learningObjective);
+        }
+
+        if (!q.sourceRefs || q.sourceRefs.length === 0) {
+          q.sourceRefs = matchedTopic.sourceRefs || fallbackSourceRef;
+        }
+
+        const explanationText = (matchedTopic.detailedExplanation || '').toLowerCase();
+        const objSnippet = (q.learningObjective || '').toLowerCase().trim();
+        const isCovered = objSnippet ? explanationText.includes(objSnippet) : true;
+
+        if (!isCovered && q.explanation) {
+          matchedTopic.detailedExplanation += `\n\n${q.explanation}`;
+          matchedTopic.bmpSummary = matchedTopic.detailedExplanation;
+        }
+      }
+    }
+  }
+
+  return parsed;
+}
 
 export const PRACTICE_QUESTIONS_JSON_SCHEMA = {
   type: 'OBJECT',
@@ -328,24 +577,41 @@ export async function defaultStudyPackSynthesizer({
   prerequisiteConcepts,
   questionCount = 5,
 }) {
-  const systemInstruction = `Anda adalah penyusun materi belajar BMP Universitas Terbuka yang akurat dan hemat sumber.
-Aturan wajib:
-1. Gunakan HANYA materi sumber BMP yang telah direview di bawah sebagai acuan kebenaran utama.
-2. Pisahkan dengan tegas antara:
-   - "bmpSummary" / "bmpDefinition": isi konsep/istilah yang berasal dari teks BMP.
-   - "aiExplanation" / "simpleAnalogy": penjelasan tambahan atau analogi bahasa sederhana untuk membantu mahasiswa memahami konsep (jangan diklaim sebagai kutipan BMP).
-3. Pertahankan istilah asli BMP.
-4. Buat ${questionCount} soal pilihan ganda (4 opsi dengan key "A", "B", "C", "D" dan correctOption berupa 1 huruf "A", "B", "C", atau "D", serta difficulty bernilai "easy", "medium", atau "hard").
-5. Setiap topik, istilah, dan soal WAJIB menyertakan "sourceRefs" yang merujuk ke halaman yang relevan (contoh: ["Halaman 1"]).`;
+  const systemInstruction = `Anda adalah kurator dan arsitek penyusun bahan belajar komprehensif Universitas Terbuka (BMP) yang berfokus pada ketuntasan pemahaman mandiri mahasiswa.
+
+PRINSIP WAJIB:
+1. JANGAN MERINGKAS TERLALU PENDEK: Mahasiswa belajar mandiri menggunakan bahan ini. Setiap topik WAJIB diuraikan secara mendalam dan jelas (minimal 2-3 paragraf naratif per topik di "detailedExplanation"), bukan sekadar 1-2 kalimat ringkasan umum.
+2. PEMISAHAN KONTEN OTENTIK BMP VS BANTUAN AI:
+   - "bmpSummary", "detailedExplanation", "coreConcepts", "comparisons", "processesOrStages": HANYA berasal dari materi sumber BMP yang telah direview. Pertahankan istilah asli BMP.
+   - "aiExplanation", "simpleAnalogy", "examples" (dengan isAiGenerated=true): Berisi analogi bahasa manusiawi, perumpamaan sehari-hari, dan contoh penerapan konkret untuk mempermudah pemahaman mahasiswa.
+3. STRUKTUR MATERI PER TOPIK:
+   - "topicLabel": Judul topik yang jelas.
+   - "learningObjectives": 1-3 sasaran pembelajaran spesifik.
+   - "coreConcepts": Konsep/definisi kunci yang harus dikuasai.
+   - "detailedExplanation": Uraian penjelasan mendalam (fakta, latar belakang, cara kerja, alasan penting).
+   - "conceptRelationships": Keterhubungan atau ketergantungan antar konsep.
+   - "comparisons": Perbandingan terstruktur (itemA, itemB, distinction) jika ada istilah yang berpotensi tertukar.
+   - "processesOrStages": Alur langkah atau tahapan berurutan jika ada mekanisme prosedural.
+   - "commonMisconceptions": Miskonsepsi umum dan klarifikasi benarnya menurut BMP.
+   - "keyTakeaways": Poin-poin kesimpulan esensial.
+4. KESELARASAN PEDAGOGIS DENGAN SOAL (PEDAGOGICAL ALIGNMENT):
+   - Seluruh ${questionCount} soal pada "initialQuestions" WAJIB bersumber dan DAPAT DIJAWAB dari penjelasan yang telah Anda tulis di "detailedExplanation", "coreConcepts", atau "glossary".
+   - DILARANG membuat soal yang menguji konsep di luar materi yang telah Anda jelaskan.
+   - Setiap butir soal harus memiliki "learningObjective", "questionType" ('single_choice', 'conceptual_application', 'scenario_based'), "difficulty", "sourceRefs", dan "explanation".
+5. REFERENSI SUMBER ("sourceRefs"):
+   - Cantumkan referensi halaman BMP yang relevan (contoh: ["Halaman 1"]) pada setiap topik, istilah glosarium, dan butir soal.`;
 
   const sourceBlocks = reviewedSources
     .map((s) => {
       const ext = s.extractedContentJson || {};
+      const sectionsText = (ext.sections || [])
+        .map((sec) => `[${sec.heading}]: ${sec.content}`)
+        .join('\n');
       return `--- SUMBER [sourceId=${s.id} | Halaman=${s.pageOrder} | Label=${s.label} | File=${s.fileName}] ---
 Judul Halaman: ${ext.pageTitle || '-'}
-Teks:
+Teks Utama:
 ${ext.extractedText || ''}
-Istilah Kunci: ${(ext.keyTerms || []).join(', ') || '-'}
+${sectionsText ? `Bagian Teks:\n${sectionsText}\n` : ''}Istilah Kunci: ${(ext.keyTerms || []).join(', ') || '-'}
 Rumus/Tabel: ${(ext.formulasOrTables || []).join('; ') || '-'}`;
     })
     .join('\n\n');
@@ -358,10 +624,16 @@ Rumus/Tabel: ${(ext.formulasOrTables || []).join('; ') || '-'}`;
   const prompt = `Mata Kuliah: ${courseRecord?.code || ''} - ${courseRecord?.name || ''}
 Modul ${moduleRecord.moduleNumber}: ${moduleRecord.title}${prereqText}
 
-Materi Sumber Terverifikasi:
+Materi Sumber Terverifikasi BMP:
 ${sourceBlocks}
 
-Hasilkan Study Pack terstruktur beserta set soal latihan awal (${questionCount} soal) dalam format JSON.`;
+Instruksi Tugas:
+1. Lakukan analisis mendalam terhadap cakupan materi BMP di atas.
+2. Susun Bahan Belajar Lengkap (Study Pack) yang kaya penjelasan konseptual, terstruktur per topik, dan dilengkapi glosarium.
+3. Rancang ${questionCount} butir soal latihan awal yang selaras secara pedagogis dengan materi yang disusun.
+4. Pastikan mahasiswa dapat memahami konsep dan menjawab seluruh soal tersebut setelah mempelajari materi ini.
+
+Hasilkan seluruh materi belajar dan butir soal dalam format JSON sesuai schema.`;
 
   return generateStructuredContent({
     taskType: 'generate_study_pack',
@@ -369,6 +641,7 @@ Hasilkan Study Pack terstruktur beserta set soal latihan awal (${questionCount} 
     systemInstruction,
     responseSchema: STUDY_PACK_SYNTHESIS_JSON_SCHEMA,
     zodSchema: studyPackSynthesisSchema,
+    enableGoogleSearch: true,
   });
 }
 
@@ -433,7 +706,7 @@ export async function enqueueStudyPackSynthesis({
     throw err;
   }
 
-  const boundedQuestionCount = Math.min(10, Math.max(3, Number(questionCount) || 5));
+  const boundedQuestionCount = Math.min(25, Math.max(3, Number(questionCount) || 10));
   const config = getEnvConfig();
   const model = config.geminiModel || 'gemini-3.5-flash';
 
@@ -450,8 +723,8 @@ export async function enqueueStudyPackSynthesis({
     targetId: moduleId,
     inputChecksum: computeSha256({ sourceDigest, boundedQuestionCount }),
     model,
-    promptVersion: 'studypack-v2',
-    schemaVersion: 1,
+    promptVersion: 'studypack-v3',
+    schemaVersion: 2,
   });
 
   const executeFn = async () => {
@@ -469,6 +742,7 @@ export async function enqueueStudyPackSynthesis({
     });
 
     const parsed = studyPackSynthesisSchema.parse(aiResponse.data);
+    const validated = validateAndAlignStudyPack(parsed, extractedSources);
 
     const savedRefs = await db.transaction(async (tx) => {
       const existingPacks = await tx
@@ -493,17 +767,18 @@ export async function enqueueStudyPackSynthesis({
         .values({
           moduleId,
           version: nextVersion,
-          title: parsed.title || `Study Pack Modul ${mod.moduleNumber} v${nextVersion}`,
+          title: validated.title || `Bahan Belajar Modul ${mod.moduleNumber} v${nextVersion}`,
           summaryJson: {
-            schemaVersion: 1,
-            overview: parsed.overview,
-            topics: parsed.topics,
-            glossary: parsed.glossary || [],
-            formulasOrProcedures: parsed.formulasOrProcedures || [],
-            coverageNotes: parsed.coverageNotes || [],
+            schemaVersion: 2,
+            overview: validated.overview,
+            moduleLearningObjectives: validated.moduleLearningObjectives || [],
+            topics: validated.topics,
+            glossary: validated.glossary || [],
+            formulasOrProcedures: validated.formulasOrProcedures || [],
+            coverageNotes: validated.coverageNotes || [],
           },
           sourceRefsJson: sourceRefsList,
-          schemaVersion: 1,
+          schemaVersion: 2,
           status: 'active',
           createdAt: now,
           updatedAt: now,
@@ -522,17 +797,19 @@ export async function enqueueStudyPackSynthesis({
           metadataJson: {
             studyPackVersion: nextVersion,
           },
-          schemaVersion: 1,
+          schemaVersion: 2,
           createdAt: now,
           updatedAt: now,
         })
         .returning();
 
-      const questionValues = parsed.initialQuestions.map((q, idx) => ({
+      const questionValues = validated.initialQuestions.map((q, idx) => ({
         questionSetId: createdQSet.id,
         moduleId,
         questionOrder: idx + 1,
         topicLabel: q.topicLabel,
+        learningObjective: q.learningObjective || `Memahami ${q.topicLabel}`,
+        questionType: q.questionType || 'single_choice',
         prompt: q.prompt,
         optionsJson: q.options,
         correctOption: q.correctOption,
@@ -589,15 +866,17 @@ export async function defaultPracticeSetGenerator({
   latestStudyPack,
   questionCount = 5,
 }) {
-  const systemInstruction = `Anda adalah pembuat soal latihan Universitas Terbuka berbasis materi BMP.
-Buat ${questionCount} soal pilihan ganda baru (opsi A, B, C, D) yang bervariasi dari materi Study Pack berikut.
-Jangan mengarang fakta di luar materi. Setiap soal wajib memiliki "topicLabel", "explanation", difficulty ("easy", "medium", atau "hard"), dan "sourceRefs".`;
+  const systemInstruction = `Anda adalah pembuat soal latihan adaptif Universitas Terbuka berbasis materi BMP.
+Aturan:
+1. Buat ${questionCount} butir soal pilihan ganda baru (opsi A, B, C, D) yang bersumber HANYA dari bahan materi belajar Study Pack di bawah.
+2. Setiap butir soal WAJIB menguji konsep yang dijelaskan dalam materi Study Pack. Jangan menguji konsep yang tidak ada di dalam materi.
+3. Sertakan "topicLabel", "learningObjective", "questionType" ('single_choice', 'conceptual_application', 'scenario_based'), "difficulty", "sourceRefs", dan "explanation" pada setiap butir soal.`;
 
   const prompt = `Modul ${moduleRecord.moduleNumber}: ${moduleRecord.title}
-Ringkasan Materi & Topik:
-${JSON.stringify(latestStudyPack.summaryJson)}
+Bahan Belajar Terstruktur (Study Pack):
+${JSON.stringify(latestStudyPack.summaryJson, null, 2)}
 
-Buat ${questionCount} soal latihan pilihan ganda dalam JSON.`;
+Buat ${questionCount} butir soal latihan pilihan ganda baru yang teruji keselarasan konsepnya dalam format JSON.`;
 
   return generateStructuredContent({
     taskType: 'generate_question_set',
@@ -644,7 +923,7 @@ export async function enqueueAdditionalQuestionSet({
     throw err;
   }
 
-  const boundedCount = Math.min(10, Math.max(3, Number(questionCount) || 5));
+  const boundedCount = Math.min(30, Math.max(3, Number(questionCount) || 10));
   const config = getEnvConfig();
   const model = config.geminiModel || 'gemini-3.5-flash';
 
@@ -701,6 +980,8 @@ export async function enqueueAdditionalQuestionSet({
         moduleId,
         questionOrder: idx + 1,
         topicLabel: q.topicLabel,
+        learningObjective: q.learningObjective || `Menerapkan konsep ${q.topicLabel}`,
+        questionType: q.questionType || 'conceptual_application',
         prompt: q.prompt,
         optionsJson: q.options,
         correctOption: q.correctOption,

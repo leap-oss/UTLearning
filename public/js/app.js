@@ -45,7 +45,9 @@ document.addEventListener('alpine:init', () => {
     pollingTimer: null,
 
     // Study pack synthesis form
-    synthesisQuestionCount: 5,
+    synthesisQuestionCount: 10,
+    practiceQuestionCount: 10,
+    remedialQuestionCount: 5,
 
     // Quiz Runner state
     activeQuestionSet: null,
@@ -449,8 +451,12 @@ document.addEventListener('alpine:init', () => {
         }
 
         this.clearStagedFiles();
-        await this.pollAiJobUntilDone(data.jobId, 'Mengekstrak teks & struktur halaman BMP...', async () => {
-          await this.openModule(this.activeModule.id, 'sources');
+        const targetModuleId = this.activeModule.id;
+        await this.pollAiJobUntilDone(data.jobId, 'Mengekstrak teks & struktur halaman BMP...', async (jobResult) => {
+          const modIdToOpen = targetModuleId || jobResult?.resultRefs?.moduleId || jobResult?.targetId;
+          if (modIdToOpen) {
+            await this.openModule(modIdToOpen, 'sources');
+          }
           await this.refreshSystemStatus();
           this.showNotice('Ekstraksi selesai! Silakan periksa hasil ekstraksi sebelum membuat Study Pack.');
         });
@@ -548,11 +554,12 @@ document.addEventListener('alpine:init', () => {
     // ==================== STUDY PACK & QUIZ SYNTHESIS ====================
     async generateStudyPackAndQuiz(regenerate = false) {
       if (!this.activeModule) return;
+      const targetModuleId = this.activeModule.id;
       this.clearBanners();
 
       const idemKey = this.generateIdempotencyKey('studypack');
       try {
-        const res = await fetch(`/api/modules/${this.activeModule.id}/study-packs`, {
+        const res = await fetch(`/api/modules/${targetModuleId}/study-packs`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -573,8 +580,11 @@ document.addEventListener('alpine:init', () => {
         await this.pollAiJobUntilDone(
           data.jobId,
           'Menyusun Study Pack (Rangkuman BMP, Istilah, Penjelasan AI) & Kuis Awal...',
-          async () => {
-            await this.openModule(this.activeModule.id, 'study');
+          async (jobResult) => {
+            const modIdToOpen = targetModuleId || jobResult?.resultRefs?.moduleId || jobResult?.targetId;
+            if (modIdToOpen) {
+              await this.openModule(modIdToOpen, 'study');
+            }
             await this.refreshSystemStatus();
             this.showNotice(
               data.reusedCache
@@ -590,18 +600,20 @@ document.addEventListener('alpine:init', () => {
 
     async generateExtraPracticeSet() {
       if (!this.activeModule) return;
+      const targetModuleId = this.activeModule.id;
       this.clearBanners();
 
       const idemKey = this.generateIdempotencyKey('practice');
+      const count = Number(this.practiceQuestionCount) || 10;
       try {
-        const res = await fetch(`/api/modules/${this.activeModule.id}/question-sets`, {
+        const res = await fetch(`/api/modules/${targetModuleId}/question-sets`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
             'Idempotency-Key': idemKey,
             Accept: 'application/json',
           },
-          body: JSON.stringify({ questionCount: 5 }),
+          body: JSON.stringify({ questionCount: count }),
         });
 
         const data = await res.json();
@@ -612,8 +624,11 @@ document.addEventListener('alpine:init', () => {
         await this.pollAiJobUntilDone(
           data.jobId,
           'Membuat soal latihan tambahan dari Study Pack...',
-          async () => {
-            await this.openModule(this.activeModule.id, 'quiz');
+          async (jobResult) => {
+            const modIdToOpen = targetModuleId || jobResult?.resultRefs?.moduleId || jobResult?.targetId;
+            if (modIdToOpen) {
+              await this.openModule(modIdToOpen, 'quiz');
+            }
             await this.refreshSystemStatus();
             this.showNotice('Set soal latihan tambahan berhasil dibuat!');
           }
@@ -636,10 +651,34 @@ document.addEventListener('alpine:init', () => {
         }
         this.activeQuestionSet = data.questionSet;
         this.quizSelections = {};
+        
+        // Restore in-progress draft answers if available
+        const inProgressDraft = (data.questionSet.attempts || []).find((a) => a.status === 'in_progress');
+        if (inProgressDraft && inProgressDraft.answersJson) {
+          this.quizSelections = { ...inProgressDraft.answersJson };
+          this.showNotice('Melanjutkan sesi pengerjaan kuis yang tersimpan.');
+        }
+
         this.activeAttemptReview = null;
         this.currentView = 'quiz_runner';
       } catch (err) {
         this.showError(err instanceof Error ? err.message : 'Gagal membuka kuis.');
+      }
+    },
+
+    async saveDraftProgress() {
+      if (!this.activeQuestionSet?.id || Object.keys(this.quizSelections || {}).length === 0) return;
+      try {
+        await fetch(`/api/question-sets/${this.activeQuestionSet.id}/draft`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Accept: 'application/json',
+          },
+          body: JSON.stringify({ selections: this.quizSelections }),
+        });
+      } catch {
+        // Silent draft auto-save failure
       }
     },
 
@@ -705,7 +744,7 @@ document.addEventListener('alpine:init', () => {
       }
     },
 
-    async generateRemedialFromAttempt(attemptId) {
+    async generateRemedialFromAttempt(attemptId, questionCount = 5) {
       this.clearBanners();
       const idemKey = this.generateIdempotencyKey('remedial');
       try {
@@ -716,7 +755,7 @@ document.addEventListener('alpine:init', () => {
             'Idempotency-Key': idemKey,
             Accept: 'application/json',
           },
-          body: JSON.stringify({}),
+          body: JSON.stringify({ questionCount: Number(questionCount) || 5 }),
         });
         const data = await res.json();
         if (!res.ok) {
@@ -742,7 +781,7 @@ document.addEventListener('alpine:init', () => {
 
     async returnFromQuizOrReview() {
       if (this.activeAttemptReview?.moduleId) {
-        await this.openModule(this.activeAttemptReview.moduleId, 'quiz');
+        await this.openModule(this.activeAttemptReview.moduleId, 'progress');
       } else if (this.activeQuestionSet?.moduleId) {
         await this.openModule(this.activeQuestionSet.moduleId, 'quiz');
       } else if (this.activeAttemptReview?.courseId) {

@@ -1,0 +1,101 @@
+<!-- ==================== DIALOG: COURSE ==================== -->
+<div
+  x-show="showCourseModal"
+  x-transition.opacity.duration.150ms
+  class="dialog-backdrop"
+  @click.self="showCourseModal = false"
+  @keydown.escape.window="showCourseModal = false"
+>
+  <div class="dialog" role="dialog" aria-modal="true" aria-labelledby="course-modal-title">
+    <h2 id="course-modal-title" class="section-title" x-text="editingCourseId ? 'Edit mata kuliah' : 'Tambah mata kuliah'"></h2>
+    <form @submit.prevent="submitCourseForm()" class="stack-md">
+      <div class="form-grid" style="grid-template-columns: 9rem minmax(0, 1fr)">
+        <div class="field">
+          <label for="course-code-input" class="field-label">Kode</label>
+          <input id="course-code-input" name="code" type="text" required maxlength="32" placeholder="MKWN4101" autocomplete="off" x-model="courseForm.code" class="input figure" />
+        </div>
+        <div class="field">
+          <label for="course-name-input" class="field-label">Nama mata kuliah</label>
+          <input id="course-name-input" name="name" type="text" required maxlength="255" placeholder="Pendidikan Agama Islam" autocomplete="off" x-model="courseForm.name" class="input" />
+        </div>
+      </div>
+      <div class="form-grid">
+        <div class="field">
+          <label for="course-sem-input" class="field-label">Semester (opsional)</label>
+          <input id="course-sem-input" name="semesterLabel" type="text" maxlength="64" placeholder="Semester 1" autocomplete="off" x-model="courseForm.semesterLabel" class="input" />
+        </div>
+        <div class="field">
+          <label for="course-modcount-input" class="field-label">Perkiraan jumlah modul</label>
+          <input id="course-modcount-input" name="expectedModuleCount" type="number" inputmode="numeric" min="1" max="50" required x-model="courseForm.expectedModuleCount" class="input figure" />
+        </div>
+      </div>
+      <div class="dialog-actions">
+        <button type="button" @click="showCourseModal = false" class="btn btn--ghost">Batal</button>
+        <button type="submit" :disabled="savingCourse" class="btn btn--primary" x-text="savingCourse ? 'Menyimpan…' : 'Simpan'"></button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- ==================== DIALOG: MODULE ==================== -->
+<div
+  x-show="showModuleModal"
+  x-transition.opacity.duration.150ms
+  class="dialog-backdrop"
+  @click.self="showModuleModal = false"
+  @keydown.escape.window="showModuleModal = false"
+>
+  <div class="dialog" role="dialog" aria-modal="true" aria-labelledby="module-modal-title">
+    <h2 id="module-modal-title" class="section-title" x-text="editingModuleId ? 'Edit modul' : 'Tambah modul'"></h2>
+    <form @submit.prevent="submitModuleForm()" class="stack-md">
+      <div class="form-grid" style="grid-template-columns: 7rem minmax(0, 1fr)">
+        <div class="field">
+          <label for="module-num-input" class="field-label">Nomor</label>
+          <input id="module-num-input" name="moduleNumber" type="number" inputmode="numeric" min="1" max="200" required x-model="moduleForm.moduleNumber" class="input figure" />
+        </div>
+        <div class="field">
+          <label for="module-title-input" class="field-label">Judul modul</label>
+          <input id="module-title-input" name="title" type="text" required maxlength="255" placeholder="Ketuhanan Yang Maha Esa" autocomplete="off" x-model="moduleForm.title" class="input" />
+        </div>
+      </div>
+      <div class="field">
+        <label for="module-status-select" class="field-label">Status belajar</label>
+        <select id="module-status-select" name="status" x-model="moduleForm.status" class="select">
+          <option value="empty">Belum dipelajari</option>
+          <option value="in_progress">Sedang dipelajari</option>
+          <option value="needs_review">Perlu review</option>
+          <option value="mastered">Dikuasai</option>
+        </select>
+        <span class="field-hint">Status juga diperbarui otomatis dari hasil kuis.</span>
+      </div>
+      <div class="dialog-actions">
+        <button type="button" @click="showModuleModal = false" class="btn btn--ghost">Batal</button>
+        <button type="submit" :disabled="savingModule" class="btn btn--primary" x-text="savingModule ? 'Menyimpan…' : 'Simpan modul'"></button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- ==================== DIALOG: CONFIRM ==================== -->
+<div
+  x-show="confirmDialog.open"
+  x-transition.opacity.duration.150ms
+  class="dialog-backdrop"
+  @click.self="confirmDialog.open = false"
+  @keydown.escape.window="confirmDialog.open = false"
+>
+  <div class="dialog" role="alertdialog" aria-modal="true" aria-labelledby="confirm-modal-title" aria-describedby="confirm-modal-desc">
+    <h2 id="confirm-modal-title" class="section-title" x-text="confirmDialog.title"></h2>
+    <p id="confirm-modal-desc" class="lede" x-text="confirmDialog.message"></p>
+    <div class="dialog-actions">
+      <button id="confirm-cancel-btn" type="button" @click="confirmDialog.open = false" class="btn btn--ghost">Batal</button>
+      <button
+        type="button"
+        @click="executeConfirmDialog()"
+        :disabled="confirmDialog.processing"
+        class="btn btn--danger"
+        x-text="confirmDialog.processing ? 'Memproses…' : confirmDialog.confirmLabel"
+      ></button>
+    </div>
+  </div>
+</div>

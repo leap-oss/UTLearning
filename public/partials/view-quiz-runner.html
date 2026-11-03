@@ -1,0 +1,88 @@
+<!-- ==================== VIEW 4: QUIZ RUNNER ==================== -->
+<section x-show="currentView === 'quiz_runner' && activeQuestionSet" class="view" data-view="quiz_runner" style="gap: var(--space-xl)">
+  <div class="quiz">
+    <div>
+      <button type="button" @click="returnFromQuizOrReview()" class="btn btn--ghost btn--sm">Keluar dari kuis</button>
+    </div>
+    <header class="stack-sm">
+      <template x-if="activeQuestionSet?.setType">
+        <span class="tag" style="align-self: flex-start" x-text="setTypeLabel(activeQuestionSet.setType)"></span>
+      </template>
+      <h1 class="page-title" style="font-size: var(--text-3xl)" data-view-title tabindex="-1" x-text="activeQuestionSet?.title"></h1>
+      <p class="lede">
+        <span class="figure" x-text="activeQuestionSet?.questions?.length || 0"></span> soal pilihan ganda. Jawab semua, lalu kumpulkan untuk melihat pembahasan.
+      </p>
+    </header>
+
+    <template x-if="activeQuestionSet?.metadata?.diagnosticFeedback">
+      <section class="callout callout--info" aria-labelledby="diag-heading">
+        <div class="stack-sm">
+          <h2 id="diag-heading" class="sub-title">Fokus remedial</h2>
+          <p x-text="activeQuestionSet.metadata.diagnosticFeedback.overallDiagnosis"></p>
+          <template x-for="(td, tdIdx) in activeQuestionSet.metadata.diagnosticFeedback.topicDiagnostics || []" :key="tdIdx">
+            <div class="stack-2xs">
+              <p><strong x-text="td.topicLabel"></strong></p>
+              <p class="meta" x-text="td.misconceptionAnalysis"></p>
+              <p class="meta" x-text="`Saran: ${td.reviewGuidance}`"></p>
+            </div>
+          </template>
+        </div>
+      </section>
+    </template>
+
+    <template x-for="(q, qIdx) in activeQuestionSet?.questions || []" :key="q.id">
+      <article class="question">
+        <div class="cluster">
+          <span class="code" x-text="`Soal ${qIdx + 1}`"></span>
+          <span class="meta" x-text="q.topicLabel"></span>
+          <template x-if="q.difficulty">
+            <span class="tag" x-text="difficultyLabel(q.difficulty)"></span>
+          </template>
+          <template x-if="q.questionType && q.questionType !== 'single_choice'">
+            <span class="tag" x-text="q.questionType.replace('_', ' ')"></span>
+          </template>
+        </div>
+        <template x-if="q.learningObjective">
+          <p class="meta" style="font-size: var(--text-xs)" x-text="`Sasaran: ${q.learningObjective}`"></p>
+        </template>
+        <p class="question-prompt" :id="`q-prompt-${q.id}`" x-text="q.prompt"></p>
+        <fieldset class="options" :aria-labelledby="`q-prompt-${q.id}`">
+          <template x-for="opt in q.options || []" :key="opt.key">
+            <label class="option" :class="quizSelections[q.id] === opt.key ? 'is-selected' : ''">
+              <input
+                type="radio"
+                :name="`q-${q.id}`"
+                :value="opt.key"
+                x-model="quizSelections[q.id]"
+                @change="saveDraftProgress()"
+              />
+              <span class="option-key" x-text="opt.key" aria-hidden="true"></span>
+              <span x-text="opt.text"></span>
+            </label>
+          </template>
+        </fieldset>
+      </article>
+    </template>
+  </div>
+
+  <div class="quiz-footer">
+    <div class="quiz-footer-inner">
+      <div class="grow stack-xs">
+        <div class="meter meter--thin" role="progressbar" :aria-valuenow="answeredCount" aria-valuemin="0" :aria-valuemax="activeQuestionSet?.questions?.length || 0" aria-label="Soal terjawab">
+          <div class="meter-seg meter-seg--progress" :style="`width: ${answeredPct}%`"></div>
+        </div>
+        <p class="meta">
+          <strong class="figure" x-text="answeredCount"></strong> dari
+          <span class="figure" x-text="activeQuestionSet?.questions?.length || 0"></span> terjawab
+        </p>
+      </div>
+      <button
+        type="button"
+        @click="submitQuizAnswers()"
+        :disabled="submittingQuiz"
+        class="btn btn--primary btn--lg"
+        x-text="submittingQuiz ? 'Menilai…' : 'Kumpulkan jawaban'"
+      ></button>
+    </div>
+  </div>
+</section>

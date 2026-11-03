@@ -1,0 +1,90 @@
+<!-- ==================== VIEW 6: SYSTEM ==================== -->
+<section x-show="currentView === 'system'" class="view" data-view="system">
+  <header class="split">
+    <div class="stack-xs">
+      <h1 class="page-title" data-view-title tabindex="-1">Status sistem</h1>
+      <p class="lede">Koneksi layanan dan pemakaian AI yang tercatat oleh aplikasi ini.</p>
+    </div>
+    <button
+      type="button"
+      @click="refreshSystemStatus()"
+      :disabled="loadingHealth"
+      class="btn"
+      x-text="loadingHealth ? 'Memeriksa…' : 'Periksa ulang'"
+    ></button>
+  </header>
+
+  <template x-if="healthError">
+    <div class="callout callout--bad" role="alert"><p x-text="`Gagal menghubungi server: ${healthError}`"></p></div>
+  </template>
+
+  <section aria-labelledby="health-heading" class="stack-md">
+    <h2 id="health-heading" class="section-title">Layanan</h2>
+    <dl class="glossary">
+      <div>
+        <dt>Server</dt>
+        <dd>
+          <span :class="health?.status === 'ok' ? 'state state--ok' : 'state state--empty'" x-text="health?.status === 'ok' ? 'Aktif' : 'Memuat'"></span>
+          <span class="meta">Node <span class="figure" x-text="health?.server?.nodeVersion || 'tidak diketahui'"></span></span>
+        </dd>
+      </div>
+      <div>
+        <dt>Basis data</dt>
+        <dd>
+          <span :class="health?.database?.connected ? 'state state--ok' : 'state state--review'" x-text="health?.database?.connected ? 'Terhubung' : 'Tidak terhubung'"></span>
+          <span class="meta" x-show="health?.database?.latencyMs != null">Latensi <span class="figure" x-text="`${health?.database?.latencyMs} ms`"></span></span>
+          <span class="meta" x-show="!health?.database?.connected" x-text="health?.database?.status || ''"></span>
+        </dd>
+      </div>
+      <div>
+        <dt>Gemini API</dt>
+        <dd>
+          <span :class="health?.ai?.apiKeyConfigured ? 'state state--ok' : 'state state--review'" x-text="health?.ai?.apiKeyConfigured ? 'Kunci API terpasang' : 'Kunci API belum diatur'"></span>
+          <span class="meta">
+            Model <span class="code" x-text="health?.ai?.model || 'belum diatur'"></span>, penalaran
+            <span x-text="health?.ai?.thinkingLevel || 'low'"></span>, pencarian web
+            <span x-text="health?.ai?.googleSearchEnabled ? 'aktif' : 'nonaktif'"></span>
+          </span>
+        </dd>
+      </div>
+      <div>
+        <dt>Antrean AI</dt>
+        <dd>
+          <span class="meta" x-text="health?.ai?.queue ? `${health.ai.queue.activeCount} berjalan, ${health.ai.queue.queuedCount} menunggu` : 'Tidak diketahui'"></span>
+        </dd>
+      </div>
+    </dl>
+  </section>
+
+  <section x-show="usageSummary" class="stack-md" aria-labelledby="usage-heading">
+    <div class="stack-2xs">
+      <h2 id="usage-heading" class="section-title">Pemakaian AI tercatat</h2>
+      <p class="lede">
+        <span x-text="usageSummary?.disclaimer"></span>
+        <a :href="usageSummary?.aiStudioRateLimitUrl || 'https://aistudio.google.com/rate-limit'" target="_blank" rel="noopener noreferrer">Lihat batas di Google AI Studio</a>
+      </p>
+    </div>
+    <dl class="figures">
+      <div>
+        <dt class="label">Permintaan hari ini (UTC)</dt>
+        <dd class="figure-value" x-text="usageSummary?.todayUtc?.requestCount ?? 0"></dd>
+        <dd class="meta">
+          <span class="figure" x-text="usageSummary?.todayUtc?.succeededCount ?? 0"></span> berhasil,
+          <span class="figure" x-text="usageSummary?.todayUtc?.failedCount ?? 0"></span> gagal
+        </dd>
+      </div>
+      <div>
+        <dt class="label">Token hari ini (UTC)</dt>
+        <dd class="figure-value" x-text="usageSummary?.todayUtc?.totalTokens ?? 0"></dd>
+      </div>
+      <div>
+        <dt class="label">Total permintaan</dt>
+        <dd class="figure-value" x-text="usageSummary?.allTime?.requestCount ?? 0"></dd>
+      </div>
+      <div>
+        <dt class="label">Total token penalaran</dt>
+        <dd class="figure-value" x-text="usageSummary?.allTime?.thinkingTokens ?? 0"></dd>
+      </div>
+    </dl>
+  </section>
+</section>
