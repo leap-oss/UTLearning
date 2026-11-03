@@ -7,6 +7,9 @@
   "scripts": {
     "start": "node src/server.js",
     "dev": "node --watch src/server.js",
+    "build:css": "tailwindcss -i ./src/styles/tailwind.css -o ./public/css/tailwind.css --minify",
+    "build": "npm run build:css",
+    "vercel-build": "npm run build:css",
     "test": "node --test test/*.test.js",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "node src/db/migrate.js",
@@ -22,6 +25,7 @@
     "zod": "^4.3.6"
   },
   "devDependencies": {
-    "drizzle-kit": "^0.31.9"
+    "drizzle-kit": "^0.31.9",
+    "tailwindcss": "^3.4.19"
   }
 }

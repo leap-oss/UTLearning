@@ -100,7 +100,8 @@ document.addEventListener('alpine:init', () => {
       this.$watch('showCourseModal', (open) => open && this.focusFirstField('#course-code-input'));
       this.$watch('showModuleModal', (open) => open && this.focusFirstField('#module-num-input'));
       this.$watch('confirmDialog.open', (open) => open && this.focusFirstField('#confirm-cancel-btn'));
-      await Promise.all([this.loadCourses(), this.refreshSystemStatus()]);
+      await this.loadCourses();
+      this.refreshSystemStatus(this.currentView === 'system');
     },
 
     async fetchJson(url, options = {}, retryCount = 1) {
@@ -245,14 +246,17 @@ document.addEventListener('alpine:init', () => {
       return map[diff] || diff || 'Campuran seimbang';
     },
 
-    async refreshSystemStatus() {
+    async refreshSystemStatus(includeUsage = true) {
       this.loadingHealth = true;
       this.healthError = null;
 
       try {
+        const shouldFetchUsage = includeUsage || this.currentView === 'system';
         const [healthRes, usageRes] = await Promise.all([
           fetch('/api/health', { headers: { Accept: 'application/json' } }),
-          fetch('/api/ai/usage/summary', { headers: { Accept: 'application/json' } }),
+          shouldFetchUsage
+            ? fetch('/api/ai/usage/summary', { headers: { Accept: 'application/json' } })
+            : Promise.resolve(null),
         ]);
 
         if (!healthRes.ok) {
@@ -260,7 +264,7 @@ document.addEventListener('alpine:init', () => {
         }
 
         this.health = await healthRes.json();
-        if (usageRes.ok) {
+        if (usageRes && usageRes.ok) {
           this.usageSummary = await usageRes.json();
         }
         this.lastCheckedAt = new Date().toLocaleTimeString('id-ID');
@@ -1145,6 +1149,52 @@ document.addEventListener('alpine:init', () => {
         ready: verified >= 2,
         missing: Math.max(0, 2 - verified),
       };
+    },
+
+    get knowledgeGaps() {
+      const progModules = this.courseProgress?.modules || [];
+      return progModules.filter(
+        (m) => m.status === 'needs_review' || (m.weakTopics && m.weakTopics.length > 0)
+      );
+    },
+
+    get moduleNextStep() {
+      const sourcesCount = this.activeModule?.sources?.length || 0;
+      const packsCount = this.activeModule?.studyPacks?.length || 0;
+      const attemptsCount = this.moduleProgress?.attemptCount || 0;
+      const weakCount = this.moduleProgress?.weakTopics?.length || 0;
+
+      if (sourcesCount === 0) {
+        return 'Unggah foto halaman BMP (Rangkuman, Tes Formatif, atau Materi) untuk memulai.';
+      }
+      if (this.unreviewedSourcesCount > 0) {
+        return `Periksa ${this.unreviewedSourcesCount} halaman hasil ekstraksi AI sebelum menyusun Study Pack.`;
+      }
+      if (packsCount === 0) {
+        return 'Semua halaman sudah diverifikasi. Susun Study Pack dan kuis awal di tab Rangkuman.';
+      }
+      if (attemptsCount === 0) {
+        return 'Study Pack siap dibaca. Kerjakan kuis awal di tab Kuis untuk menguji pemahaman.';
+      }
+      if (weakCount > 0) {
+        return `Terdapat ${weakCount} topik dengan akurasi di bawah 75%. Tinjau progres atau susun latihan remedial.`;
+      }
+      return 'Materi modul ini sudah dipelajari dengan baik. Anda dapat mengulang kuis atau menambah latihan.';
+    },
+
+    sourceLabel(label) {
+      const map = {
+        rangkuman: 'Rangkuman',
+        tes_formatif: 'Tes Formatif',
+        materi: 'Materi',
+      };
+      return map[label] || label || 'Materi';
+    },
+
+    optionText(questionObj, optionKey) {
+      if (!questionObj || !optionKey) return '-';
+      const found = (questionObj.options || []).find((o) => o.key === optionKey);
+      return found ? found.text : optionKey;
     },
 
     get answeredPct() {

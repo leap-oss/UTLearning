@@ -14,10 +14,7 @@
       href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible+Mono:wght@400&family=Host+Grotesk:wght@400;500&family=Newsreader:opsz,wght@6..72,400&display=swap"
       rel="stylesheet"
     />
-    <script>
-      window.tailwind = { config: { corePlugins: { preflight: false } } };
-    </script>
-    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="css/tailwind.css" />
     <link rel="stylesheet" href="css/app.css" />
     <script defer src="/js/app.js"></script>
     <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.14.8/dist/cdn.min.js"></script>
@@ -1131,8 +1128,8 @@
 
             <header class="stack-lg">
               <div class="stack-sm">
-                <p class="meta">Dikumpulkan <span x-text="formatDateTime(activeAttemptReview?.submittedAt)"></span></p>
                 <h1 class="page-title" style="font-size: var(--text-3xl)" data-view-title tabindex="-1" x-text="activeAttemptReview?.questionSetTitle"></h1>
+                <p class="meta">Dikumpulkan <span x-text="formatDateTime(activeAttemptReview?.submittedAt)"></span></p>
               </div>
               <div class="split split--center" style="border-top: 1px solid var(--color-rule); padding-top: var(--space-lg)">
                 <div class="stack-xs">

@@ -1,4 +1,4 @@
-import { eq, asc, desc, and, inArray, ne } from 'drizzle-orm';
+import { eq, asc, desc, and, or, inArray, ne } from 'drizzle-orm';
 import { z } from 'zod';
 import { getDb } from '../db/client.js';
 import {
@@ -965,59 +965,61 @@ export async function enqueueCourseExamSimulation({
 
 export async function getModuleProgress(moduleId) {
   const db = getDb();
-  const [mod] = await db
-    .select()
-    .from(modules)
-    .where(eq(modules.id, moduleId))
-    .limit(1);
 
-  if (!mod) return null;
-
-  const qSets = await db
-    .select()
-    .from(questionSets)
-    .where(eq(questionSets.moduleId, moduleId))
-    .orderBy(desc(questionSets.createdAt));
-
-  const qSetIds = qSets.map((s) => s.id);
-  let attempts = [];
-  if (qSetIds.length > 0) {
-    attempts = await db
-      .select()
-      .from(quizAttempts)
-      .where(inArray(quizAttempts.questionSetId, qSetIds))
-      .orderBy(desc(quizAttempts.submittedAt));
-  }
-
-  // Calculate topic mastery across all answers on questions belonging to this module
-  const modQuestions = await db
-    .select()
-    .from(questions)
-    .where(eq(questions.moduleId, moduleId));
-
-  const qMap = new Map(modQuestions.map((q) => [q.id, q]));
-  const modQuestionIds = modQuestions.map((q) => q.id);
-
-  let answers = [];
-  if (modQuestionIds.length > 0) {
-    answers = await db
-      .select()
+  const [modSetAttemptRows, answerRows] = await Promise.all([
+    db
+      .select({
+        mod: modules,
+        qSet: questionSets,
+        attempt: quizAttempts,
+      })
+      .from(modules)
+      .leftJoin(questionSets, eq(questionSets.moduleId, modules.id))
+      .leftJoin(quizAttempts, eq(quizAttempts.questionSetId, questionSets.id))
+      .where(eq(modules.id, moduleId))
+      .orderBy(desc(questionSets.createdAt), desc(quizAttempts.submittedAt)),
+    db
+      .select({
+        topicLabel: questions.topicLabel,
+        isCorrect: attemptAnswers.isCorrect,
+      })
       .from(attemptAnswers)
-      .where(inArray(attemptAnswers.questionId, modQuestionIds));
+      .innerJoin(questions, eq(attemptAnswers.questionId, questions.id))
+      .where(eq(questions.moduleId, moduleId)),
+  ]);
+
+  if (modSetAttemptRows.length === 0) return null;
+
+  const mod = modSetAttemptRows[0].mod;
+  const qSetTitleMap = new Map();
+  const attemptsMap = new Map();
+
+  for (const row of modSetAttemptRows) {
+    if (row.qSet && !qSetTitleMap.has(row.qSet.id)) {
+      qSetTitleMap.set(row.qSet.id, {
+        title: row.qSet.title,
+        setType: row.qSet.setType,
+      });
+    }
+    if (row.attempt && !attemptsMap.has(row.attempt.id)) {
+      attemptsMap.set(row.attempt.id, row.attempt);
+    }
   }
+
+  const attempts = Array.from(attemptsMap.values()).sort(
+    (a, b) => new Date(b.submittedAt || 0).getTime() - new Date(a.submittedAt || 0).getTime()
+  );
 
   const topicMap = new Map();
-  for (const ans of answers) {
-    const q = qMap.get(ans.questionId);
-    if (!q) continue;
-    const entry = topicMap.get(q.topicLabel) || {
-      topicLabel: q.topicLabel,
+  for (const ans of answerRows) {
+    const entry = topicMap.get(ans.topicLabel) || {
+      topicLabel: ans.topicLabel,
       answeredCount: 0,
       correctCount: 0,
     };
     entry.answeredCount += 1;
     if (ans.isCorrect) entry.correctCount += 1;
-    topicMap.set(q.topicLabel, entry);
+    topicMap.set(ans.topicLabel, entry);
   }
 
   const topicProgress = Array.from(topicMap.values()).map((t) => ({
@@ -1025,8 +1027,6 @@ export async function getModuleProgress(moduleId) {
     accuracyPercent:
       t.answeredCount > 0 ? Math.round((t.correctCount / t.answeredCount) * 100) : 0,
   }));
-
-  const qSetTitleMap = new Map(qSets.map((s) => [s.id, { title: s.title, setType: s.setType }]));
 
   return {
     moduleId: mod.id,
@@ -1051,73 +1051,183 @@ export async function getModuleProgress(moduleId) {
 
 export async function getCourseProgress(courseId) {
   const db = getDb();
-  const [course] = await db
-    .select()
+
+  const courseModRows = await db
+    .select({
+      course: courses,
+      mod: modules,
+    })
     .from(courses)
+    .leftJoin(
+      modules,
+      and(eq(modules.courseId, courses.id), ne(modules.status, 'archived'))
+    )
     .where(eq(courses.id, courseId))
-    .limit(1);
-
-  if (!course) return null;
-
-  const courseModules = await db
-    .select()
-    .from(modules)
-    .where(and(eq(modules.courseId, courseId), ne(modules.status, 'archived')))
     .orderBy(asc(modules.moduleNumber));
 
-  const moduleBreakdown = [];
-  for (const mod of courseModules) {
-    const prog = await getModuleProgress(mod.id);
-    const [latestPack] = await db
-      .select({ id: studyPacks.id, version: studyPacks.version })
-      .from(studyPacks)
-      .where(eq(studyPacks.moduleId, mod.id))
-      .orderBy(desc(studyPacks.version))
-      .limit(1);
+  if (courseModRows.length === 0) return null;
 
-    moduleBreakdown.push({
-      ...prog,
+  const course = courseModRows[0].course;
+  const courseModules = courseModRows.map((r) => r.mod).filter(Boolean);
+  const modIds = courseModules.map((m) => m.id);
+
+  const qSetCondition =
+    modIds.length > 0
+      ? or(eq(questionSets.courseId, courseId), inArray(questionSets.moduleId, modIds))
+      : eq(questionSets.courseId, courseId);
+
+  const [qSetAttemptRows, packRows, answerRows] = await Promise.all([
+    db
+      .select({
+        qSet: questionSets,
+        attempt: quizAttempts,
+      })
+      .from(questionSets)
+      .leftJoin(quizAttempts, eq(quizAttempts.questionSetId, questionSets.id))
+      .where(qSetCondition)
+      .orderBy(desc(questionSets.createdAt), desc(quizAttempts.submittedAt)),
+    modIds.length > 0
+      ? db
+          .select({
+            id: studyPacks.id,
+            moduleId: studyPacks.moduleId,
+            version: studyPacks.version,
+          })
+          .from(studyPacks)
+          .where(inArray(studyPacks.moduleId, modIds))
+          .orderBy(desc(studyPacks.version))
+      : Promise.resolve([]),
+    modIds.length > 0
+      ? db
+          .select({
+            moduleId: questions.moduleId,
+            topicLabel: questions.topicLabel,
+            isCorrect: attemptAnswers.isCorrect,
+          })
+          .from(attemptAnswers)
+          .innerJoin(questions, eq(attemptAnswers.questionId, questions.id))
+          .where(inArray(questions.moduleId, modIds))
+      : Promise.resolve([]),
+  ]);
+
+  const latestPackByMod = new Map();
+  for (const p of packRows) {
+    if (!latestPackByMod.has(p.moduleId)) {
+      latestPackByMod.set(p.moduleId, p);
+    }
+  }
+
+  const qSetsById = new Map();
+  const attemptsBySetId = new Map();
+  for (const row of qSetAttemptRows) {
+    const qs = row.qSet;
+    if (!qSetsById.has(qs.id)) {
+      qSetsById.set(qs.id, qs);
+    }
+    if (row.attempt) {
+      let list = attemptsBySetId.get(qs.id);
+      if (!list) {
+        list = [];
+        attemptsBySetId.set(qs.id, list);
+      }
+      if (!list.some((a) => a.id === row.attempt.id)) {
+        list.push(row.attempt);
+      }
+    }
+  }
+
+  const answersByMod = new Map();
+  for (const ans of answerRows) {
+    if (!ans.moduleId) continue;
+    let list = answersByMod.get(ans.moduleId);
+    if (!list) {
+      list = [];
+      answersByMod.set(ans.moduleId, list);
+    }
+    list.push(ans);
+  }
+
+  const moduleBreakdown = courseModules.map((mod) => {
+    const modQSets = [];
+    for (const qs of qSetsById.values()) {
+      if (qs.moduleId === mod.id) {
+        modQSets.push(qs);
+      }
+    }
+
+    const qSetTitleMap = new Map(
+      modQSets.map((s) => [s.id, { title: s.title, setType: s.setType }])
+    );
+
+    const modAttempts = [];
+    for (const qs of modQSets) {
+      const list = attemptsBySetId.get(qs.id) || [];
+      for (const a of list) {
+        modAttempts.push(a);
+      }
+    }
+    modAttempts.sort(
+      (a, b) => new Date(b.submittedAt || 0).getTime() - new Date(a.submittedAt || 0).getTime()
+    );
+
+    const topicMap = new Map();
+    for (const ans of answersByMod.get(mod.id) || []) {
+      const entry = topicMap.get(ans.topicLabel) || {
+        topicLabel: ans.topicLabel,
+        answeredCount: 0,
+        correctCount: 0,
+      };
+      entry.answeredCount += 1;
+      if (ans.isCorrect) entry.correctCount += 1;
+      topicMap.set(ans.topicLabel, entry);
+    }
+
+    const topicProgress = Array.from(topicMap.values()).map((t) => ({
+      ...t,
+      accuracyPercent:
+        t.answeredCount > 0 ? Math.round((t.correctCount / t.answeredCount) * 100) : 0,
+    }));
+
+    const latestPack = latestPackByMod.get(mod.id);
+
+    return {
+      moduleId: mod.id,
+      moduleNumber: mod.moduleNumber,
+      title: mod.title,
+      status: mod.status,
+      attemptCount: modAttempts.length,
+      averageScore:
+        modAttempts.length > 0
+          ? Math.round(modAttempts.reduce((sum, a) => sum + a.score, 0) / modAttempts.length)
+          : null,
+      latestScore: modAttempts[0]?.score ?? null,
+      attempts: modAttempts.map((a) => ({
+        ...a,
+        questionSetTitle: qSetTitleMap.get(a.questionSetId)?.title || 'Kuis',
+        setType: qSetTitleMap.get(a.questionSetId)?.setType || 'initial',
+      })),
+      topicProgress,
+      weakTopics: topicProgress.filter((t) => t.accuracyPercent < 75),
       hasVerifiedStudyPack: Boolean(latestPack),
       latestStudyPackVersion: latestPack?.version ?? null,
-    });
+    };
+  });
+
+  const examSimulations = [];
+  for (const qs of qSetsById.values()) {
+    if (qs.courseId === courseId && qs.setType === 'exam_simulation') {
+      const simAttempts = (attemptsBySetId.get(qs.id) || []).slice().sort(
+        (a, b) => new Date(b.submittedAt || 0).getTime() - new Date(a.submittedAt || 0).getTime()
+      );
+      examSimulations.push({
+        id: qs.id,
+        title: qs.title,
+        metadata: qs.metadataJson || {},
+        createdAt: qs.createdAt,
+        attempts: simAttempts,
+      });
+    }
   }
-
-  // Also fetch exam simulations for this course
-  const examSimSets = await db
-    .select()
-    .from(questionSets)
-    .where(
-      and(
-        eq(questionSets.courseId, courseId),
-        eq(questionSets.setType, 'exam_simulation')
-      )
-    )
-    .orderBy(desc(questionSets.createdAt));
-
-  const simIds = examSimSets.map((s) => s.id);
-  let simAttempts = [];
-  if (simIds.length > 0) {
-    simAttempts = await db
-      .select()
-      .from(quizAttempts)
-      .where(inArray(quizAttempts.questionSetId, simIds))
-      .orderBy(desc(quizAttempts.submittedAt));
-  }
-
-  const attemptsBySetId = new Map();
-  for (const a of simAttempts) {
-    const list = attemptsBySetId.get(a.questionSetId) || [];
-    list.push(a);
-    attemptsBySetId.set(a.questionSetId, list);
-  }
-
-  const examSimulations = examSimSets.map((s) => ({
-    id: s.id,
-    title: s.title,
-    metadata: s.metadataJson || {},
-    createdAt: s.createdAt,
-    attempts: attemptsBySetId.get(s.id) || [],
-  }));
 
   return {
     courseId: course.id,

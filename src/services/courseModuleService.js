@@ -123,33 +123,42 @@ function summarizeCourseModules(courseModules) {
 export async function listCourses({ includeArchived = false } = {}) {
   const db = getDb();
 
-  const courseRows = includeArchived
-    ? await db.select().from(courses).orderBy(desc(courses.updatedAt))
-    : await db
-        .select()
-        .from(courses)
-        .where(eq(courses.status, 'active'))
-        .orderBy(desc(courses.updatedAt));
+  const joinCondition = includeArchived
+    ? eq(modules.courseId, courses.id)
+    : and(eq(modules.courseId, courses.id), ne(modules.status, 'archived'));
 
-  if (courseRows.length === 0) {
+  const baseQuery = db
+    .select({
+      course: courses,
+      module: modules,
+    })
+    .from(courses)
+    .leftJoin(modules, joinCondition);
+
+  const rows = includeArchived
+    ? await baseQuery.orderBy(desc(courses.updatedAt), asc(modules.moduleNumber))
+    : await baseQuery
+        .where(eq(courses.status, 'active'))
+        .orderBy(desc(courses.updatedAt), asc(modules.moduleNumber));
+
+  if (rows.length === 0) {
     return [];
   }
 
-  const allModules = await db
-    .select()
-    .from(modules)
-    .orderBy(asc(modules.moduleNumber));
-
-  const modulesByCourse = new Map();
-  for (const mod of allModules) {
-    if (!includeArchived && mod.status === 'archived') continue;
-    const list = modulesByCourse.get(mod.courseId) || [];
-    list.push(mod);
-    modulesByCourse.set(mod.courseId, list);
+  const courseMap = new Map();
+  for (const row of rows) {
+    const c = row.course;
+    let entry = courseMap.get(c.id);
+    if (!entry) {
+      entry = { course: c, modules: [] };
+      courseMap.set(c.id, entry);
+    }
+    if (row.module) {
+      entry.modules.push(row.module);
+    }
   }
 
-  return courseRows.map((c) => {
-    const courseModules = modulesByCourse.get(c.id) || [];
+  return Array.from(courseMap.values()).map(({ course: c, modules: courseModules }) => {
     const { counts, lastActivityAt } = summarizeCourseModules(courseModules);
     const latestAt =
       lastActivityAt && new Date(lastActivityAt) > new Date(c.updatedAt)
@@ -199,25 +208,26 @@ export async function createCourse(input) {
 
 export async function getCourseById(courseId, { includeArchivedModules = false } = {}) {
   const db = getDb();
-  const [course] = await db
-    .select()
-    .from(courses)
-    .where(eq(courses.id, courseId))
-    .limit(1);
+  const joinCondition = includeArchivedModules
+    ? eq(modules.courseId, courses.id)
+    : and(eq(modules.courseId, courses.id), ne(modules.status, 'archived'));
 
-  if (!course) {
+  const rows = await db
+    .select({
+      course: courses,
+      module: modules,
+    })
+    .from(courses)
+    .leftJoin(modules, joinCondition)
+    .where(eq(courses.id, courseId))
+    .orderBy(asc(modules.moduleNumber));
+
+  if (rows.length === 0) {
     return null;
   }
 
-  const modRows = await db
-    .select()
-    .from(modules)
-    .where(eq(modules.courseId, courseId))
-    .orderBy(asc(modules.moduleNumber));
-
-  const visibleModules = includeArchivedModules
-    ? modRows
-    : modRows.filter((m) => m.status !== 'archived');
+  const course = rows[0].course;
+  const visibleModules = rows.map((r) => r.module).filter(Boolean);
 
   const { counts, lastActivityAt } = summarizeCourseModules(visibleModules);
   const latestAt =
@@ -368,39 +378,39 @@ export async function createModule(courseId, input) {
 
 export async function getModuleDetail(moduleId) {
   const db = getDb();
-  const [mod] = await db
-    .select()
-    .from(modules)
-    .where(eq(modules.id, moduleId))
-    .limit(1);
 
-  if (!mod) {
+  const [modCourseRows, sources, packs, qSets] = await Promise.all([
+    db
+      .select({
+        mod: modules,
+        course: courses,
+      })
+      .from(modules)
+      .leftJoin(courses, eq(courses.id, modules.courseId))
+      .where(eq(modules.id, moduleId))
+      .limit(1),
+    db
+      .select()
+      .from(sourceAssets)
+      .where(eq(sourceAssets.moduleId, moduleId))
+      .orderBy(asc(sourceAssets.pageOrder), asc(sourceAssets.createdAt)),
+    db
+      .select()
+      .from(studyPacks)
+      .where(eq(studyPacks.moduleId, moduleId))
+      .orderBy(desc(studyPacks.version)),
+    db
+      .select()
+      .from(questionSets)
+      .where(eq(questionSets.moduleId, moduleId))
+      .orderBy(desc(questionSets.createdAt)),
+  ]);
+
+  if (modCourseRows.length === 0) {
     return null;
   }
 
-  const [course] = await db
-    .select()
-    .from(courses)
-    .where(eq(courses.id, mod.courseId))
-    .limit(1);
-
-  const sources = await db
-    .select()
-    .from(sourceAssets)
-    .where(eq(sourceAssets.moduleId, moduleId))
-    .orderBy(asc(sourceAssets.pageOrder), asc(sourceAssets.createdAt));
-
-  const packs = await db
-    .select()
-    .from(studyPacks)
-    .where(eq(studyPacks.moduleId, moduleId))
-    .orderBy(desc(studyPacks.version));
-
-  const qSets = await db
-    .select()
-    .from(questionSets)
-    .where(eq(questionSets.moduleId, moduleId))
-    .orderBy(desc(questionSets.createdAt));
+  const { mod, course } = modCourseRows[0];
 
   return {
     ...mod,

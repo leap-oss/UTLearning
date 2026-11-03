@@ -469,7 +469,7 @@ body {
 /* Segmented meter: real counts only */
 .meter {
   display: flex;
-  gap: 2px;
+  gap: var(--space-3xs);
   width: 100%;
   height: 6px;
   border-radius: 3px;
@@ -938,7 +938,7 @@ label.checklist-item { cursor: pointer; }
   content: "";
   width: 7px;
   height: 4px;
-  margin-top: -2px;
+  margin-top: calc(-1 * var(--space-3xs));
   border-left: 1.5px solid var(--color-paper);
   border-bottom: 1.5px solid var(--color-paper);
   transform: rotate(-45deg);
@@ -1237,7 +1237,9 @@ label.checklist-item { cursor: pointer; }
   display: flex;
   flex-direction: column;
   gap: var(--space-xs);
-  width: min(26rem, calc(100vw - 2 * var(--gutter)));
+  width: 100%;
+  max-width: 26rem;
+  box-sizing: border-box;
 }
 
 .toast {

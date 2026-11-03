@@ -295,69 +295,92 @@ export async function checkSoftDailyBudget() {
 export async function getAiUsageSummary() {
   const db = getDb();
   const config = getEnvConfig();
-  const today = await getTodayUsageTotals();
+  const startOfDayUtc = new Date();
+  startOfDayUtc.setUTCHours(0, 0, 0, 0);
 
-  const [allTime] = await db
-    .select({
-      requestCount: sql`count(*)::int`,
-      succeededCount: sql`count(*) filter (where ${aiUsageEvents.status} = 'succeeded')::int`,
-      failedCount: sql`count(*) filter (where ${aiUsageEvents.status} = 'failed')::int`,
-      promptTokens: sql`coalesce(sum(${aiUsageEvents.promptTokens}), 0)::int`,
-      outputTokens: sql`coalesce(sum(${aiUsageEvents.outputTokens}), 0)::int`,
-      thinkingTokens: sql`coalesce(sum(${aiUsageEvents.thinkingTokens}), 0)::int`,
-      totalTokens: sql`coalesce(sum(${aiUsageEvents.totalTokens}), 0)::int`,
-      searchGroundingCount: sql`count(*) filter (where ${aiUsageEvents.searchGroundingUsed} = true)::int`,
-    })
-    .from(aiUsageEvents);
+  const result = await db.execute(sql`
+    WITH totals AS (
+      SELECT
+        count(*) filter (where ${aiUsageEvents.createdAt} >= ${startOfDayUtc})::int AS today_request_count,
+        count(*) filter (where ${aiUsageEvents.createdAt} >= ${startOfDayUtc} and ${aiUsageEvents.status} = 'succeeded')::int AS today_succeeded_count,
+        count(*) filter (where ${aiUsageEvents.createdAt} >= ${startOfDayUtc} and ${aiUsageEvents.status} = 'failed')::int AS today_failed_count,
+        coalesce(sum(${aiUsageEvents.promptTokens}) filter (where ${aiUsageEvents.createdAt} >= ${startOfDayUtc}), 0)::int AS today_prompt_tokens,
+        coalesce(sum(${aiUsageEvents.outputTokens}) filter (where ${aiUsageEvents.createdAt} >= ${startOfDayUtc}), 0)::int AS today_output_tokens,
+        coalesce(sum(${aiUsageEvents.thinkingTokens}) filter (where ${aiUsageEvents.createdAt} >= ${startOfDayUtc}), 0)::int AS today_thinking_tokens,
+        coalesce(sum(${aiUsageEvents.totalTokens}) filter (where ${aiUsageEvents.createdAt} >= ${startOfDayUtc}), 0)::int AS today_total_tokens,
+        count(*)::int AS all_request_count,
+        count(*) filter (where ${aiUsageEvents.status} = 'succeeded')::int AS all_succeeded_count,
+        count(*) filter (where ${aiUsageEvents.status} = 'failed')::int AS all_failed_count,
+        coalesce(sum(${aiUsageEvents.promptTokens}), 0)::int AS all_prompt_tokens,
+        coalesce(sum(${aiUsageEvents.outputTokens}), 0)::int AS all_output_tokens,
+        coalesce(sum(${aiUsageEvents.thinkingTokens}), 0)::int AS all_thinking_tokens,
+        coalesce(sum(${aiUsageEvents.totalTokens}), 0)::int AS all_total_tokens,
+        count(*) filter (where ${aiUsageEvents.searchGroundingUsed} = true)::int AS all_search_grounding_count
+      FROM ${aiUsageEvents}
+    ),
+    by_task AS (
+      SELECT
+        ${aiUsageEvents.taskType} AS "taskType",
+        ${aiUsageEvents.model} AS "model",
+        count(*)::int AS "requestCount",
+        count(*) filter (where ${aiUsageEvents.status} = 'succeeded')::int AS "succeededCount",
+        count(*) filter (where ${aiUsageEvents.status} = 'failed')::int AS "failedCount",
+        coalesce(sum(${aiUsageEvents.totalTokens}), 0)::int AS "totalTokens"
+      FROM ${aiUsageEvents}
+      GROUP BY ${aiUsageEvents.taskType}, ${aiUsageEvents.model}
+    ),
+    recent_failures AS (
+      SELECT
+        ${aiUsageEvents.id} AS "id",
+        ${aiUsageEvents.jobId} AS "jobId",
+        ${aiUsageEvents.model} AS "model",
+        ${aiUsageEvents.taskType} AS "taskType",
+        ${aiUsageEvents.httpStatus} AS "httpStatus",
+        ${aiUsageEvents.errorCode} AS "errorCode",
+        ${aiUsageEvents.errorMessage} AS "errorMessage",
+        ${aiUsageEvents.createdAt} AS "createdAt"
+      FROM ${aiUsageEvents}
+      WHERE ${aiUsageEvents.status} = 'failed'
+      ORDER BY ${aiUsageEvents.createdAt} DESC
+      LIMIT 10
+    )
+    SELECT
+      (SELECT row_to_json(t) FROM totals t) AS totals,
+      coalesce((SELECT json_agg(row_to_json(b)) FROM by_task b), '[]'::json) AS by_task,
+      coalesce((SELECT json_agg(row_to_json(r)) FROM recent_failures r), '[]'::json) AS recent_failures
+  `);
 
-  const byTask = await db
-    .select({
-      taskType: aiUsageEvents.taskType,
-      model: aiUsageEvents.model,
-      requestCount: sql`count(*)::int`,
-      succeededCount: sql`count(*) filter (where ${aiUsageEvents.status} = 'succeeded')::int`,
-      failedCount: sql`count(*) filter (where ${aiUsageEvents.status} = 'failed')::int`,
-      totalTokens: sql`coalesce(sum(${aiUsageEvents.totalTokens}), 0)::int`,
-    })
-    .from(aiUsageEvents)
-    .groupBy(aiUsageEvents.taskType, aiUsageEvents.model);
-
-  const recentFailures = await db
-    .select({
-      id: aiUsageEvents.id,
-      jobId: aiUsageEvents.jobId,
-      model: aiUsageEvents.model,
-      taskType: aiUsageEvents.taskType,
-      httpStatus: aiUsageEvents.httpStatus,
-      errorCode: aiUsageEvents.errorCode,
-      errorMessage: aiUsageEvents.errorMessage,
-      createdAt: aiUsageEvents.createdAt,
-    })
-    .from(aiUsageEvents)
-    .where(eq(aiUsageEvents.status, 'failed'))
-    .orderBy(desc(aiUsageEvents.createdAt))
-    .limit(10);
+  const row = result.rows?.[0] || {};
+  const t = row.totals || {};
 
   return {
     disclaimer:
       'Data di bawah hanya mencatat pemakaian dari aplikasi ini (app-recorded usage), BUKAN sisa kuota resmi Google. Lihat kuota aktual proyek di Google AI Studio.',
     aiStudioRateLimitUrl: 'https://aistudio.google.com/rate-limit',
-    todayUtc: today,
-    allTime: allTime || {
-      requestCount: 0,
-      succeededCount: 0,
-      failedCount: 0,
-      promptTokens: 0,
-      outputTokens: 0,
-      thinkingTokens: 0,
-      totalTokens: 0,
-      searchGroundingCount: 0,
+    todayUtc: {
+      requestCount: t.today_request_count ?? 0,
+      succeededCount: t.today_succeeded_count ?? 0,
+      failedCount: t.today_failed_count ?? 0,
+      promptTokens: t.today_prompt_tokens ?? 0,
+      outputTokens: t.today_output_tokens ?? 0,
+      thinkingTokens: t.today_thinking_tokens ?? 0,
+      totalTokens: t.today_total_tokens ?? 0,
+    },
+    allTime: {
+      requestCount: t.all_request_count ?? 0,
+      succeededCount: t.all_succeeded_count ?? 0,
+      failedCount: t.all_failed_count ?? 0,
+      promptTokens: t.all_prompt_tokens ?? 0,
+      outputTokens: t.all_output_tokens ?? 0,
+      thinkingTokens: t.all_thinking_tokens ?? 0,
+      totalTokens: t.all_total_tokens ?? 0,
+      searchGroundingCount: t.all_search_grounding_count ?? 0,
     },
     softBudgets: {
       dailyRequestBudget: config.aiSoftDailyRequestBudget,
       dailyTokenBudget: config.aiSoftDailyTokenBudget,
     },
-    byTask,
-    recentFailures,
+    byTask: row.by_task || [],
+    recentFailures: row.recent_failures || [],
   };
 }

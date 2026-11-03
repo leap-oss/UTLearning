@@ -63,7 +63,7 @@ test('GET / serves index.html with Alpine.js and Tailwind CSS', async () => {
     const html = await res.text();
     assert.match(html, /UT AI Learning Companion/);
     assert.match(html, /alpinejs/);
-    assert.match(html, /tailwindcss/);
+    assert.match(html, /tailwind\.css/);
   });
 });
 
