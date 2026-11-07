@@ -5,6 +5,7 @@ import {
   topicLearningMaterialSchema,
   validateAndAlignStudyPack,
 } from '../src/services/studyPackService.js';
+import { remedialBatchOutputSchema } from '../src/services/quizAndRemedialService.js';
 
 test('Comprehensive Study Pack: v1 Legacy Schema backward compatibility', () => {
   const legacyV1Input = {
@@ -222,4 +223,51 @@ test('Comprehensive Study Pack: Pedagogical Alignment enriches topic when questi
   );
   assert.ok(validated.topics[0].detailedExplanation.includes('context switch'));
   assert.ok(validated.topics[0].bmpSummary.includes('context switch'));
+});
+
+test('Remedial Deepening: parses contrastive micro-lesson fields with backward compatibility', () => {
+  const remedialWithDeepening = {
+    schemaVersion: 1,
+    title: 'Remedial Terfokus: Teisme vs Deisme',
+    diagnosticFeedback: {
+      overallDiagnosis: 'Mahasiswa terkecoh perbedaan peran Tuhan pasca penciptaan alam.',
+      topicDiagnostics: [
+        {
+          topicLabel: 'Konsep Ketuhanan',
+          misconceptionAnalysis: 'Tertukar antara Deisme dan Teisme.',
+          whyYouWereTripped:
+            'Anda memilih Deisme karena sama-sama mengakui Tuhan sebagai pencipta, namun lupa bahwa Deisme memandang Tuhan pasif setelahnya.',
+          bmpKeyRule:
+            'Menurut BMP Modul 1, Teisme memandang Tuhan selalu aktif memelihara dan membimbing ciptaan-Nya.',
+          practicalAnalogy:
+            'Deisme seperti pembuat jam yang membiarkan jam berputar sendiri, sedangkan Teisme seperti pengemudi yang terus mengendalikan mobilnya.',
+          reviewGuidance: 'Buka kembali topik Konsep Ketuhanan Halaman 4.',
+          sourceRefs: ['Halaman 4'],
+        },
+      ],
+    },
+    remedialQuestions: [
+      {
+        topicLabel: 'Konsep Ketuhanan',
+        prompt: 'Pandangan yang menyatakan bahwa Tuhan menciptakan alam lalu tidak campur tangan lagi disebut...',
+        options: [
+          { key: 'A', text: 'Deisme' },
+          { key: 'B', text: 'Panteisme' },
+          { key: 'C', text: 'Teisme' },
+          { key: 'D', text: 'Politeisme' },
+        ],
+        correctOption: 'A',
+        explanation: 'Deisme meyakini Tuhan tidak lagi campur tangan setelah penciptaan.',
+        difficulty: 'medium',
+        sourceRefs: ['Halaman 4'],
+      },
+    ],
+  };
+
+  const parsed = remedialBatchOutputSchema.parse(remedialWithDeepening);
+  assert.equal(parsed.diagnosticFeedback.topicDiagnostics.length, 1);
+  const td = parsed.diagnosticFeedback.topicDiagnostics[0];
+  assert.ok(td.whyYouWereTripped.includes('Deisme'));
+  assert.ok(td.bmpKeyRule.includes('Teisme'));
+  assert.ok(td.practicalAnalogy.includes('pembuat jam'));
 });

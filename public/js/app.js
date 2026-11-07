@@ -48,9 +48,11 @@ document.addEventListener('alpine:init', () => {
     synthesisQuestionCount: 10,
     practiceQuestionCount: 10,
     remedialQuestionCount: 5,
+    activeTopicId: null,
 
     // Quiz Runner state
     activeQuestionSet: null,
+    remedialRunnerStep: 'quiz', // 'study' | 'quiz'
     quizSelections: {}, // { [questionId]: 'A' | 'B' | 'C' | 'D' }
     submittingQuiz: false,
     activeAttemptReview: null,
@@ -81,6 +83,7 @@ document.addEventListener('alpine:init', () => {
     showModuleModal: false,
     editingModuleId: null,
     savingModule: false,
+    isAutoMappingToc: false,
     moduleForm: {
       moduleNumber: 1,
       title: '',
@@ -98,7 +101,31 @@ document.addEventListener('alpine:init', () => {
     },
 
     async init() {
-      this.$watch('currentView', () => this.focusViewTitle());
+      this.$watch('currentView', (view) => {
+        this.focusViewTitle();
+        if (view === 'module' && this.moduleTab === 'study') {
+          this.$nextTick(() => {
+            this.setupTopicScrollSpy();
+            this.refreshActiveTopic();
+          });
+        }
+      });
+      this.$watch('moduleTab', (tab) => {
+        if (tab === 'study') {
+          this.$nextTick(() => {
+            this.setupTopicScrollSpy();
+            this.refreshActiveTopic();
+          });
+        }
+      });
+      this.$watch('selectedStudyPackVersion', () => {
+        if (this.moduleTab === 'study') {
+          this.$nextTick(() => {
+            this.setupTopicScrollSpy();
+            this.refreshActiveTopic();
+          });
+        }
+      });
       this.$watch('showCourseModal', (open) => open && this.focusFirstField('#course-code-input'));
       this.$watch('showModuleModal', (open) => open && this.focusFirstField('#module-num-input'));
       this.$watch('confirmDialog.open', (open) => open && this.focusFirstField('#confirm-cancel-btn'));
@@ -238,6 +265,95 @@ document.addEventListener('alpine:init', () => {
       };
     },
 
+    refreshActiveTopic() {
+      const sections = Array.from(document.querySelectorAll('.reader section.topic, .reader section#glossary'));
+      if (sections.length > 0 && !this.activeTopicId) {
+        this.activeTopicId = sections[0].id;
+      }
+    },
+
+    scrollToTopic(topicId, event) {
+      if (event) event.preventDefault();
+      const el = document.getElementById(topicId);
+      if (!el) return;
+      const isMobile = window.innerWidth <= 960;
+      const offset = isMobile ? 112 : 72;
+      const y = el.getBoundingClientRect().top + window.scrollY - offset;
+      window.scrollTo({ top: Math.max(0, y), behavior: 'smooth' });
+      this.activeTopicId = topicId;
+
+      if (isMobile) {
+        const toc = document.querySelector('.reader .toc');
+        const activeLink = toc?.querySelector(`.toc-link[href="#${topicId}"]`);
+        if (toc && activeLink) {
+          const tocRect = toc.getBoundingClientRect();
+          const linkRect = activeLink.getBoundingClientRect();
+          const scrollLeftDiff = linkRect.left + linkRect.width / 2 - (tocRect.left + tocRect.width / 2);
+          toc.scrollBy({ left: scrollLeftDiff, behavior: 'smooth' });
+        }
+      }
+    },
+
+    setupTopicScrollSpy() {
+      if (this._scrollSpyAttached) {
+        this.refreshActiveTopic();
+        return;
+      }
+      this._scrollSpyAttached = true;
+
+      const updateActive = () => {
+        if (this.currentView !== 'module' || this.moduleTab !== 'study') return;
+        const sections = Array.from(document.querySelectorAll('.reader section.topic, .reader section#glossary'));
+        if (!sections.length) return;
+
+        const scrollY = window.scrollY || window.pageYOffset;
+        const isMobile = window.innerWidth <= 960;
+        const offset = isMobile ? 130 : 90;
+
+        let foundId = null;
+        for (const section of sections) {
+          const top = section.getBoundingClientRect().top + scrollY - offset;
+          if (scrollY >= top) {
+            foundId = section.id;
+          }
+        }
+
+        if (!foundId && sections.length > 0) {
+          foundId = sections[0].id;
+        }
+
+        if (foundId && this.activeTopicId !== foundId) {
+          this.activeTopicId = foundId;
+          if (isMobile) {
+            const toc = document.querySelector('.reader .toc');
+            const activeLink = toc?.querySelector(`.toc-link[href="#${foundId}"]`);
+            if (toc && activeLink) {
+              const tocRect = toc.getBoundingClientRect();
+              const linkRect = activeLink.getBoundingClientRect();
+              const scrollLeftDiff = linkRect.left + linkRect.width / 2 - (tocRect.left + tocRect.width / 2);
+              toc.scrollBy({ left: scrollLeftDiff, behavior: 'smooth' });
+            }
+          }
+        }
+      };
+
+      window.addEventListener(
+        'scroll',
+        () => {
+          if (!this._scrollSpyTicking) {
+            window.requestAnimationFrame(() => {
+              updateActive();
+              this._scrollSpyTicking = false;
+            });
+            this._scrollSpyTicking = true;
+          }
+        },
+        { passive: true }
+      );
+
+      setTimeout(updateActive, 150);
+    },
+
     difficultyLabel(diff) {
       const map = {
         easy: 'Mudah',
@@ -351,6 +467,12 @@ document.addEventListener('alpine:init', () => {
 
         this.editingSourceId = null;
         this.currentView = 'module';
+        if (this.moduleTab === 'study') {
+          this.$nextTick(() => {
+            this.setupTopicScrollSpy();
+            this.refreshActiveTopic();
+          });
+        }
       } catch (err) {
         this.showError(err instanceof Error ? err.message : 'Gagal memuat modul.');
       } finally {
@@ -652,6 +774,15 @@ document.addEventListener('alpine:init', () => {
         this.activeQuestionSet = data.questionSet;
         this.quizSelections = {};
         
+        // If this is a remedial set with diagnostic feedback, start at 'study' step so student reads deepening first!
+        const meta = data.questionSet?.metadata || data.questionSet?.metadataJson || {};
+        const hasDiagnostics = Boolean(meta.diagnosticFeedback?.topicDiagnostics?.length > 0);
+        if (data.questionSet?.setType === 'remedial' && hasDiagnostics) {
+          this.remedialRunnerStep = 'study';
+        } else {
+          this.remedialRunnerStep = 'quiz';
+        }
+        
         // Restore in-progress draft answers if available
         const inProgressDraft = (data.questionSet.attempts || []).find((a) => a.status === 'in_progress');
         if (inProgressDraft && inProgressDraft.answersJson) {
@@ -664,6 +795,21 @@ document.addEventListener('alpine:init', () => {
       } catch (err) {
         this.showError(err instanceof Error ? err.message : 'Gagal membuka kuis.');
       }
+    },
+
+    async jumpToTopicInStudyPack(topicLabel) {
+      if (!this.activeQuestionSet?.moduleId) return;
+      const modId = this.activeQuestionSet.moduleId;
+      await this.openModule(modId, 'study');
+      this.$nextTick(() => {
+        if (!topicLabel) return;
+        const sections = Array.from(document.querySelectorAll('.reader section.topic'));
+        const clean = topicLabel.toLowerCase().trim();
+        const matched = sections.find((s) => s.textContent.toLowerCase().includes(clean));
+        if (matched) {
+          this.scrollToTopic(matched.id);
+        }
+      });
     },
 
     async saveDraftProgress() {
@@ -944,7 +1090,7 @@ document.addEventListener('alpine:init', () => {
           body: JSON.stringify({
             code: this.courseForm.code,
             name: this.courseForm.name,
-            semesterLabel: this.courseForm.semesterLabel,
+            semesterLabel: this.formatSemester(this.courseForm.semesterLabel),
             expectedModuleCount: Number(this.courseForm.expectedModuleCount) || 9,
           }),
         });
@@ -1093,6 +1239,41 @@ document.addEventListener('alpine:init', () => {
         this.showError(err instanceof Error ? err.message : 'Gagal menyimpan modul.');
       } finally {
         this.savingModule = false;
+      }
+    },
+
+    async handleTocImageUpload(event) {
+      const files = event.target.files;
+      if (!files || files.length === 0 || !this.activeCourse) return;
+
+      this.isAutoMappingToc = true;
+      this.clearBanners();
+      this.showNotice('Menganalisis foto Daftar Isi BMP dengan AI Vision... Mohon tunggu.');
+
+      try {
+        const formData = new FormData();
+        for (let i = 0; i < files.length; i++) {
+          formData.append('tocImages', files[i]);
+        }
+
+        const res = await fetch(`/api/courses/${this.activeCourse.id}/auto-map-modules`, {
+          method: 'POST',
+          body: formData,
+        });
+
+        const data = await res.json();
+        if (!res.ok) {
+          throw new Error(data.message || 'Gagal memetakan modul dari foto Daftar Isi.');
+        }
+
+        await this.openCourse(this.activeCourse.id);
+        await this.loadCourses();
+        this.showNotice(data.message || `Berhasil memetakan ${data.count} modul otomatis dari Daftar Isi BMP!`);
+      } catch (err) {
+        this.showError(err instanceof Error ? err.message : 'Gagal memetakan modul dari foto Daftar Isi.');
+      } finally {
+        this.isAutoMappingToc = false;
+        event.target.value = '';
       }
     },
 
@@ -1309,6 +1490,19 @@ document.addEventListener('alpine:init', () => {
       } catch {
         return iso;
       }
+    },
+
+    formatSemester(val) {
+      if (!val) return '';
+      const trimmed = String(val).trim();
+      if (!trimmed) return '';
+      if (/^semester\s+/i.test(trimmed)) {
+        return trimmed;
+      }
+      if (/^\d+$/.test(trimmed)) {
+        return `Semester ${trimmed}`;
+      }
+      return trimmed;
     },
 
     formatBytes(bytes) {

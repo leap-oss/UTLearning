@@ -10,7 +10,7 @@
         <div class="cluster">
           <span class="code" x-text="activeCourse?.code"></span>
           <template x-if="activeCourse?.semesterLabel">
-            <span class="meta" x-text="activeCourse?.semesterLabel"></span>
+            <span class="tag tag--semester" x-text="formatSemester(activeCourse?.semesterLabel)"></span>
           </template>
           <span class="meta">
             Target <span class="figure" x-text="courseOverviewMetrics.expected"></span> modul
@@ -23,6 +23,30 @@
       </div>
 
       <div class="cluster cluster--tight">
+        <label
+          class="btn btn--sm cursor-pointer"
+          :class="{ 'opacity-60 pointer-events-none': isAutoMappingToc }"
+          title="Pindai foto Daftar Isi BMP untuk memetakan seluruh modul otomatis dengan AI"
+        >
+          <span class="spinner" aria-hidden="true" x-show="isAutoMappingToc"></span>
+          <svg x-show="!isAutoMappingToc" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M3 7V5a2 2 0 0 1 2-2h2"/>
+            <path d="M17 3h2a2 2 0 0 1 2 2v2"/>
+            <path d="M21 17v2a2 2 0 0 1-2 2h-2"/>
+            <path d="M3 17v2a2 2 0 0 0 2 2h2"/>
+            <rect x="7" y="7" width="10" height="10" rx="1.5"/>
+          </svg>
+          <span x-show="!isAutoMappingToc">Pindai Daftar Isi</span>
+          <span x-show="isAutoMappingToc">Menganalisis...</span>
+          <input
+            type="file"
+            accept="image/*"
+            multiple
+            class="sr-only"
+            @change="handleTocImageUpload($event)"
+            :disabled="isAutoMappingToc"
+          />
+        </label>
         <button type="button" @click="openCreateModuleModal()" class="btn btn--sm">Tambah modul</button>
         <div class="menu" x-data="{ open: false }" @click.outside="open = false" @keydown.escape="open = false">
           <button type="button" class="btn btn--ghost btn--sm" @click="open = !open" :aria-expanded="open.toString()" aria-haspopup="menu">
@@ -125,10 +149,43 @@
     </div>
 
     <template x-if="!activeCourse?.modules || activeCourse.modules.length === 0">
-      <div class="empty">
-        <p class="sub-title">Belum ada modul</p>
-        <p class="lede">Tambahkan modul yang sedang Anda pelajari. Nomornya bebas, tidak harus berurutan.</p>
-        <button type="button" @click="openCreateModuleModal()" class="btn btn--primary">Tambah modul</button>
+      <div class="stack-md">
+        <label class="dropzone" style="cursor: pointer;">
+          <div class="stack-2xs">
+            <div class="cluster cluster--tight" style="align-items: center;">
+              <span class="sub-title">Pemetaan Otomatis dari Daftar Isi BMP</span>
+              <span class="tag">AI Vision</span>
+            </div>
+            <p class="meta">
+              Unggah 1–2 foto halaman <strong>Daftar Isi</strong> Buku Materi Pokok. AI akan langsung memetakan seluruh nomor modul, judul materi resmi, dan topik Kegiatan Belajar tanpa perlu input manual.
+            </p>
+          </div>
+          <span class="btn btn--primary btn--sm" :class="{ 'opacity-60 pointer-events-none': isAutoMappingToc }">
+            <span class="spinner" aria-hidden="true" x-show="isAutoMappingToc"></span>
+            <svg x-show="!isAutoMappingToc" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M3 7V5a2 2 0 0 1 2-2h2"/>
+              <path d="M17 3h2a2 2 0 0 1 2 2v2"/>
+              <path d="M21 17v2a2 2 0 0 1-2 2h-2"/>
+              <path d="M3 17v2a2 2 0 0 0 2 2h2"/>
+              <rect x="7" y="7" width="10" height="10" rx="1.5"/>
+            </svg>
+            <span x-show="!isAutoMappingToc">Pilih Foto Daftar Isi</span>
+            <span x-show="isAutoMappingToc">Sedang Menganalisis...</span>
+          </span>
+          <input
+            type="file"
+            accept="image/*"
+            multiple
+            class="sr-only"
+            @change="handleTocImageUpload($event)"
+            :disabled="isAutoMappingToc"
+          />
+        </label>
+
+        <div style="display: flex; align-items: center; justify-content: center; gap: var(--space-xs);">
+          <span class="meta" style="font-size: var(--text-xs);">atau masukkan modul secara mandiri:</span>
+          <button type="button" @click="openCreateModuleModal()" class="btn btn--ghost btn--sm">Tambah modul manual</button>
+        </div>
       </div>
     </template>
 

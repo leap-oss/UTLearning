@@ -65,7 +65,7 @@
           <div class="cluster cluster--tight">
             <span class="code" x-text="course.code"></span>
             <template x-if="course.semesterLabel">
-              <span class="meta" x-text="course.semesterLabel"></span>
+              <span class="tag tag--semester" x-text="formatSemester(course.semesterLabel)"></span>
             </template>
             <template x-if="course.status === 'archived'">
               <span class="tag">Diarsipkan</span>

@@ -19,7 +19,7 @@
           </span>
         </div>
         <template x-if="(activeAttemptReview?.score || 0) < 100">
-          <div class="stack-xs" style="align-items: flex-end">
+          <div class="stack-xs remedial-box">
             <div class="cluster cluster--tight">
               <select x-model="remedialQuestionCount" class="select" aria-label="Jumlah soal remedial">
                 <option value="3">3 soal (Fokus Cepat)</option>
@@ -46,7 +46,7 @@
         <h2 id="module-breakdown-heading" class="section-title">Skor per modul</h2>
         <div class="ledger">
           <template x-for="mb in activeAttemptReview.moduleBreakdown" :key="mb.moduleId">
-            <div class="ledger-row" style="grid-template-columns: minmax(0, 1fr) minmax(5rem, 10rem) 6rem">
+            <div class="ledger-row module-breakdown-row">
               <span>
                 <span class="row-index" x-text="`Modul ${mb.moduleNumber}`"></span>
                 <span x-text="mb.moduleTitle"></span>

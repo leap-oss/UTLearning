@@ -170,5 +170,13 @@ test('Milestone 2: Two courses with flexible modules can be created, updated, re
     const allListRes = await fetch(`${baseUrl}/api/courses?includeArchived=true`);
     const { courses: allList } = await allListRes.json();
     assert.equal(allList.some((c) => c.id === c2.id), true);
+
+    // 9. Auto-map route validation test
+    const autoMapNoFilesRes = await fetch(`${baseUrl}/api/courses/${c1.id}/auto-map-modules`, {
+      method: 'POST',
+    });
+    assert.equal(autoMapNoFilesRes.status, 400);
+    const autoMapNoFilesJson = await autoMapNoFilesRes.json();
+    assert.equal(autoMapNoFilesJson.error, 'NO_FILES_UPLOADED');
   });
 });

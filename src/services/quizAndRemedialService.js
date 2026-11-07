@@ -56,6 +56,21 @@ export const remedialBatchOutputSchema = z.object({
             .optional()
             .default('')
             .transform((s) => (s && s.trim() ? s.trim() : 'Perlu penguatan konsep pada topik ini.')),
+          whyYouWereTripped: z
+            .string()
+            .optional()
+            .default('')
+            .transform((s) => (s && s.trim() ? s.trim() : '')),
+          bmpKeyRule: z
+            .string()
+            .optional()
+            .default('')
+            .transform((s) => (s && s.trim() ? s.trim() : '')),
+          practicalAnalogy: z
+            .string()
+            .optional()
+            .default('')
+            .transform((s) => (s && s.trim() ? s.trim() : '')),
           reviewGuidance: z
             .string()
             .optional()
@@ -88,6 +103,18 @@ export const REMEDIAL_BATCH_JSON_SCHEMA = {
             properties: {
               topicLabel: { type: 'STRING' },
               misconceptionAnalysis: { type: 'STRING' },
+              whyYouWereTripped: {
+                type: 'STRING',
+                description: 'Analisis kontras mengapa opsi salah yang dipilih siswa tampak mengecoh dibanding jawaban benar BMP (hindari merangkum ulang bab, fokus pada titik beda).',
+              },
+              bmpKeyRule: {
+                type: 'STRING',
+                description: '1-2 kalimat kaidah/aturan kunci BMP yang wajib diingat.',
+              },
+              practicalAnalogy: {
+                type: 'STRING',
+                description: 'Analogi intuitif atau jembatan logika praktis agar konsep mudah dipahami.',
+              },
               reviewGuidance: { type: 'STRING' },
               sourceRefs: { type: 'ARRAY', items: { type: 'STRING' } },
             },
@@ -642,8 +669,15 @@ export async function defaultRemedialGenerator({
 
   const systemInstruction = `Anda adalah tutor diagnostik adaptif Universitas Terbuka berbasis materi BMP yang telah diverifikasi.
 Tugas Anda:
-1. Analisis seluruh jawaban salah mahasiswa secara terfokus pada learning objective dan letak miskonsepsi konsep.
-2. Rancang ${targetCount} soal remedial pilihan ganda baru (4 opsi: A, B, C, D) yang menguji learning objective yang sama dari topik yang salah, namun dengan skenario/distraktor/konteks baru yang berbeda (JANGAN mengulang kalimat soal asli).
+1. PENDALAMAN MATERI TERFOKUS (Micro-Lesson sebelum kuis remedial):
+   Untuk setiap topik yang salah, susun materi pendalaman terarah agar siswa memahaminya SEBELUM mengerjakan soal remedial:
+   - "misconceptionAnalysis": Inti miskonsepsi mahasiswa secara ringkas.
+   - "whyYouWereTripped": Analisis kontras spesifik mengapa opsi salah yang dipilih siswa tampak mengecoh, dan bagaimana cara membedakannya dengan jawaban yang benar menurut BMP. DILARANG merangkum ulang seluruh bab, fokuslah pada titik beda (contrastive).
+   - "bmpKeyRule": 1-2 kalimat kaidah / aturan emas BMP yang wajib diingat.
+   - "practicalAnalogy": Analogi intuitif atau jembatan logika praktis sehari-hari agar siswa mudah mengingat konsep tersebut (diberi tanda bantuan AI).
+   - "reviewGuidance": Panduan bagian halaman/materi BMP yang perlu diperiksa.
+2. LATIHAN REMEDIAL:
+   Rancang ${targetCount} soal remedial pilihan ganda baru (4 opsi: A, B, C, D) yang menguji learning objective yang sama dari topik yang salah, namun dengan skenario/distraktor/konteks baru yang berbeda (JANGAN mengulang kalimat soal asli).
 3. Sertakan "learningObjective", "questionType" ('scenario_based', 'conceptual_application', 'single_choice'), tingkat "difficulty", dan "sourceRefs" pada setiap soal.`;
 
   const prompt = `Hasil Pengerjaan Kuis: Skor ${attemptReview.score}% (${attemptReview.correctCount}/${attemptReview.totalCount})

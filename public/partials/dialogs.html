@@ -9,7 +9,7 @@
   <div class="dialog" role="dialog" aria-modal="true" aria-labelledby="course-modal-title">
     <h2 id="course-modal-title" class="section-title" x-text="editingCourseId ? 'Edit mata kuliah' : 'Tambah mata kuliah'"></h2>
     <form @submit.prevent="submitCourseForm()" class="stack-md">
-      <div class="form-grid" style="grid-template-columns: 9rem minmax(0, 1fr)">
+      <div class="form-grid form-grid--code-name">
         <div class="field">
           <label for="course-code-input" class="field-label">Kode</label>
           <input id="course-code-input" name="code" type="text" required maxlength="32" placeholder="MKWN4101" autocomplete="off" x-model="courseForm.code" class="input figure" />
@@ -48,7 +48,7 @@
   <div class="dialog" role="dialog" aria-modal="true" aria-labelledby="module-modal-title">
     <h2 id="module-modal-title" class="section-title" x-text="editingModuleId ? 'Edit modul' : 'Tambah modul'"></h2>
     <form @submit.prevent="submitModuleForm()" class="stack-md">
-      <div class="form-grid" style="grid-template-columns: 7rem minmax(0, 1fr)">
+      <div class="form-grid form-grid--num-title">
         <div class="field">
           <label for="module-num-input" class="field-label">Nomor</label>
           <input id="module-num-input" name="moduleNumber" type="number" inputmode="numeric" min="1" max="200" required x-model="moduleForm.moduleNumber" class="input figure" />

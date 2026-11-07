@@ -1,4 +1,7 @@
+import os from 'node:os';
+import path from 'node:path';
 import express from 'express';
+import multer from 'multer';
 import { z } from 'zod';
 import {
   listCourses,
@@ -11,7 +14,18 @@ import {
   getModuleDetail,
   updateModule,
   archiveModule,
+  autoMapModulesFromImages,
 } from '../services/courseModuleService.js';
+import { safeCleanupTempFiles } from '../services/extractionService.js';
+
+const uploadTmpDir = path.join(os.tmpdir(), 'ut-learning-toc-uploads');
+const upload = multer({
+  dest: uploadTmpDir,
+  limits: {
+    files: 10,
+    fileSize: 10 * 1024 * 1024,
+  },
+});
 
 const uuidSchema = z.string().uuid('Format ID tidak valid.');
 
@@ -172,6 +186,47 @@ export function createCourseRouter() {
         error: 'DB_ERROR',
         message: 'Gagal memuat daftar modul.',
       });
+    }
+  });
+
+  // POST /api/courses/:courseId/auto-map-modules (Auto-Scan BMP Daftar Isi)
+  router.post('/courses/:courseId/auto-map-modules', upload.array('tocImages', 10), async (req, res) => {
+    const parsedId = uuidSchema.safeParse(req.params.courseId);
+    if (!parsedId.success) {
+      if (req.files) await safeCleanupTempFiles(req.files);
+      return res.status(400).json({
+        error: 'INVALID_COURSE_ID',
+        message: 'Format courseId tidak valid.',
+      });
+    }
+
+    if (!req.files || req.files.length === 0) {
+      return res.status(400).json({
+        error: 'NO_FILES_UPLOADED',
+        message: 'Silakan unggah minimal 1 foto/gambar halaman Daftar Isi BMP.',
+      });
+    }
+
+    try {
+      const result = await autoMapModulesFromImages({
+        courseId: parsedId.data,
+        files: req.files,
+      });
+
+      return res.status(200).json({
+        success: true,
+        count: result.modules.length,
+        modules: result.modules,
+        message: `Berhasil memetakan ${result.modules.length} modul otomatis dari Daftar Isi BMP!`,
+      });
+    } catch (err) {
+      console.error('Error auto-mapping modules from TOC:', err);
+      return res.status(err.statusCode || 500).json({
+        error: err.errorCode || 'AUTO_MAP_FAILED',
+        message: err.message || 'Gagal memetakan modul dari foto Daftar Isi BMP.',
+      });
+    } finally {
+      if (req.files) await safeCleanupTempFiles(req.files);
     }
   });
 

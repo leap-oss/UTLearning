@@ -267,10 +267,23 @@
           <nav class="toc" aria-label="Topik dalam rangkuman">
             <span class="label" style="margin-bottom: var(--space-xs)">Topik</span>
             <template x-for="(topic, tIdx) in activeStudyPack.summaryJson?.topics || []" :key="tIdx">
-              <a class="toc-link" :href="`#topic-${tIdx}`" x-text="topic.topicLabel"></a>
+              <a
+                class="toc-link"
+                :class="{ 'is-active': activeTopicId === `topic-${tIdx}` }"
+                :aria-current="activeTopicId === `topic-${tIdx}` ? 'location' : null"
+                :href="`#topic-${tIdx}`"
+                @click="scrollToTopic(`topic-${tIdx}`, $event)"
+                x-text="topic.topicLabel || topic.title"
+              ></a>
             </template>
             <template x-if="activeStudyPack.summaryJson?.glossary?.length > 0">
-              <a class="toc-link" href="#glossary">Istilah penting</a>
+              <a
+                class="toc-link"
+                :class="{ 'is-active': activeTopicId === 'glossary' }"
+                :aria-current="activeTopicId === 'glossary' ? 'location' : null"
+                href="#glossary"
+                @click="scrollToTopic('glossary', $event)"
+              >Istilah penting</a>
             </template>
           </nav>
 
@@ -344,7 +357,7 @@
                     <span class="label">Pembeda & Perbandingan Konsep</span>
                     <div class="ledger" style="border: 1px solid var(--color-rule-2); border-radius: 4px; overflow: hidden">
                       <template x-for="(cmp, cpIdx) in topic.comparisons" :key="cpIdx">
-                        <div class="ledger-row" style="grid-template-columns: minmax(7rem, 11rem) minmax(7rem, 11rem) minmax(0, 1fr); padding: var(--space-sm) var(--space-md)">
+                        <div class="ledger-row comparison-row">
                           <span class="sub-title" style="font-weight: 500" x-text="cmp.itemA"></span>
                           <span class="sub-title" style="font-weight: 500; color: var(--color-accent)" x-text="cmp.itemB"></span>
                           <span class="meta" style="color: var(--color-ink-2)" x-text="cmp.distinction"></span>
@@ -564,7 +577,7 @@
       </template>
       <div class="ledger" x-show="(moduleProgress?.topicProgress?.length || 0) > 0">
         <template x-for="tp in moduleProgress?.topicProgress || []" :key="tp.topicLabel">
-          <div class="ledger-row" style="grid-template-columns: minmax(0, 1fr) minmax(6rem, 12rem) 7rem">
+          <div class="ledger-row topic-progress-row">
             <span class="sub-title" style="font-weight: 400" x-text="tp.topicLabel"></span>
             <div class="meter meter--thin" role="img" :aria-label="`Akurasi ${tp.accuracyPercent}%`">
               <div
@@ -588,7 +601,7 @@
       </template>
       <div class="ledger" x-show="(moduleProgress?.attempts?.length || 0) > 0">
         <template x-for="att in moduleProgress?.attempts || []" :key="att.id">
-          <div class="ledger-row" style="grid-template-columns: minmax(0, 1fr) auto auto">
+          <div class="ledger-row attempt-history-row">
             <div class="stack-2xs">
               <span class="sub-title" x-text="att.questionSetTitle"></span>
               <span class="meta" x-text="formatDateTime(att.submittedAt)"></span>

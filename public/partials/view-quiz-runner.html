@@ -4,68 +4,149 @@
     <div>
       <button type="button" @click="returnFromQuizOrReview()" class="btn btn--ghost btn--sm">Keluar dari kuis</button>
     </div>
-    <header class="stack-sm">
-      <template x-if="activeQuestionSet?.setType">
-        <span class="tag" style="align-self: flex-start" x-text="setTypeLabel(activeQuestionSet.setType)"></span>
-      </template>
-      <h1 class="page-title" style="font-size: var(--text-3xl)" data-view-title tabindex="-1" x-text="activeQuestionSet?.title"></h1>
-      <p class="lede">
-        <span class="figure" x-text="activeQuestionSet?.questions?.length || 0"></span> soal pilihan ganda. Jawab semua, lalu kumpulkan untuk melihat pembahasan.
-      </p>
-    </header>
 
-    <template x-if="activeQuestionSet?.metadata?.diagnosticFeedback">
-      <section class="callout callout--info" aria-labelledby="diag-heading">
-        <div class="stack-sm">
-          <h2 id="diag-heading" class="sub-title">Fokus remedial</h2>
-          <p x-text="activeQuestionSet.metadata.diagnosticFeedback.overallDiagnosis"></p>
+    <!-- TAHAP 1: PENDALAMAN MATERI (REMEDIAL REVIEW) -->
+    <template x-if="activeQuestionSet?.setType === 'remedial' && remedialRunnerStep === 'study' && activeQuestionSet?.metadata?.diagnosticFeedback">
+      <div class="stack-xl">
+        <header class="stack-sm">
+          <div class="split split--center">
+            <span class="tag" style="background: var(--color-accent-soft); color: var(--color-ink); border-color: var(--color-accent)">
+              Tahap 1: Pendalaman Materi Remedial
+            </span>
+            <button type="button" @click="remedialRunnerStep = 'quiz'" class="btn btn--sm">
+              Langsung ke Kuis &rarr;
+            </button>
+          </div>
+          <h1 class="page-title" style="font-size: var(--text-3xl)" data-view-title tabindex="-1" x-text="activeQuestionSet?.title"></h1>
+          <p class="lede">
+            Sebelum mengerjakan soal baru, pelajari bedah titik kecohan dan kaidah konsep BMP di bawah ini agar pemahaman Anda tuntas.
+          </p>
+        </header>
+
+        <section class="callout callout--info" aria-labelledby="diag-overall-heading">
+          <div class="stack-2xs">
+            <h2 id="diag-overall-heading" class="sub-title">Diagnosis Utama</h2>
+            <p class="prose" style="font-size: var(--text-md)" x-text="activeQuestionSet.metadata.diagnosticFeedback.overallDiagnosis"></p>
+          </div>
+        </section>
+
+        <div class="stack-lg">
           <template x-for="(td, tdIdx) in activeQuestionSet.metadata.diagnosticFeedback.topicDiagnostics || []" :key="tdIdx">
-            <div class="stack-2xs">
-              <p><strong x-text="td.topicLabel"></strong></p>
-              <p class="meta" x-text="td.misconceptionAnalysis"></p>
-              <p class="meta" x-text="`Saran: ${td.reviewGuidance}`"></p>
-            </div>
+            <article class="band stack-md">
+              <div class="split split--center">
+                <div class="cluster">
+                  <span class="code" x-text="`Fokus ${tdIdx + 1}`"></span>
+                  <span class="tag" style="background: var(--color-surface-2); border-color: var(--color-rule-2)" x-text="td.topicLabel"></span>
+                  <template x-if="(td.sourceRefs || []).length">
+                    <span class="meta" x-text="`Sumber: ${(td.sourceRefs || []).join(', ')}`"></span>
+                  </template>
+                </div>
+                <button type="button" @click="jumpToTopicInStudyPack(td.topicLabel)" class="btn btn--ghost btn--sm">
+                  Buka di Rangkuman BMP
+                </button>
+              </div>
+
+              <!-- Bedah Titik Kecohan (Contrastive explanation) -->
+              <div class="stack-2xs">
+                <span class="label" style="color: var(--color-bad)">Bedah Titik Kecohan</span>
+                <p class="prose" style="font-size: var(--text-md)" x-text="td.whyYouWereTripped || td.misconceptionAnalysis"></p>
+              </div>
+
+              <!-- Kaidah Inti BMP -->
+              <template x-if="td.bmpKeyRule || td.reviewGuidance">
+                <div class="topic-objectives" style="border-left-color: var(--color-ok)">
+                  <span class="label" style="color: var(--color-ok)">Kaidah Kunci BMP</span>
+                  <p class="prose" style="font-size: var(--text-sm)" x-text="td.bmpKeyRule || td.reviewGuidance"></p>
+                </div>
+              </template>
+
+              <!-- Analogi Praktis AI -->
+              <template x-if="td.practicalAnalogy">
+                <div class="ai-note">
+                  <div class="cluster cluster--tight">
+                    <strong class="label" style="text-transform: none">Analogi & Cara Ingat Praktis</strong>
+                    <span class="tag" style="font-size: var(--text-xs)">Bantuan Logika AI</span>
+                  </div>
+                  <p class="prose" style="font-size: var(--text-sm)" x-text="td.practicalAnalogy"></p>
+                </div>
+              </template>
+            </article>
           </template>
         </div>
-      </section>
+
+        <div class="band" style="text-align: center; background: var(--color-paper-2); border-color: var(--color-accent); padding: var(--space-xl)">
+          <div class="stack-sm" style="align-items: center">
+            <h2 class="sub-title" style="font-size: var(--text-2xl)">Sudah memahami materi di atas?</h2>
+            <p class="lede" style="max-width: 48ch">
+              Buktikan pemahaman Anda sekarang dengan mengerjakan kuis remedial (<span class="figure" x-text="activeQuestionSet?.questions?.length || 0"></span> soal baru).
+            </p>
+            <button type="button" @click="remedialRunnerStep = 'quiz'" class="btn btn--primary btn--lg">
+              Mulai Kuis Remedial Sekarang &rarr;
+            </button>
+          </div>
+        </div>
+      </div>
     </template>
 
-    <template x-for="(q, qIdx) in activeQuestionSet?.questions || []" :key="q.id">
-      <article class="question">
-        <div class="cluster">
-          <span class="code" x-text="`Soal ${qIdx + 1}`"></span>
-          <span class="meta" x-text="q.topicLabel"></span>
-          <template x-if="q.difficulty">
-            <span class="tag" x-text="difficultyLabel(q.difficulty)"></span>
-          </template>
-          <template x-if="q.questionType && q.questionType !== 'single_choice'">
-            <span class="tag" x-text="q.questionType.replace('_', ' ')"></span>
-          </template>
-        </div>
-        <template x-if="q.learningObjective">
-          <p class="meta" style="font-size: var(--text-xs)" x-text="`Sasaran: ${q.learningObjective}`"></p>
+    <!-- TAHAP 2: PENGERJAAN KUIS / QUIZ RUNNER -->
+    <template x-if="activeQuestionSet?.setType !== 'remedial' || remedialRunnerStep === 'quiz' || !activeQuestionSet?.metadata?.diagnosticFeedback">
+      <div class="stack-xl">
+        <header class="stack-sm">
+          <div class="split split--center">
+            <template x-if="activeQuestionSet?.setType">
+              <span class="tag" style="align-self: flex-start" x-text="setTypeLabel(activeQuestionSet.setType)"></span>
+            </template>
+            <template x-if="activeQuestionSet?.setType === 'remedial' && activeQuestionSet?.metadata?.diagnosticFeedback">
+              <button type="button" @click="remedialRunnerStep = 'study'" class="btn btn--ghost btn--sm">
+                &larr; Lihat Kembali Materi Pendalaman
+              </button>
+            </template>
+          </div>
+          <h1 class="page-title" style="font-size: var(--text-3xl)" data-view-title tabindex="-1" x-text="activeQuestionSet?.title"></h1>
+          <p class="lede">
+            <span class="figure" x-text="activeQuestionSet?.questions?.length || 0"></span> soal pilihan ganda. Jawab semua, lalu kumpulkan untuk melihat pembahasan.
+          </p>
+        </header>
+
+        <template x-for="(q, qIdx) in activeQuestionSet?.questions || []" :key="q.id">
+          <article class="question">
+            <div class="cluster">
+              <span class="code" x-text="`Soal ${qIdx + 1}`"></span>
+              <span class="meta" x-text="q.topicLabel"></span>
+              <template x-if="q.difficulty">
+                <span class="tag" x-text="difficultyLabel(q.difficulty)"></span>
+              </template>
+              <template x-if="q.questionType && q.questionType !== 'single_choice'">
+                <span class="tag" x-text="q.questionType.replace('_', ' ')"></span>
+              </template>
+            </div>
+            <template x-if="q.learningObjective">
+              <p class="meta" style="font-size: var(--text-xs)" x-text="`Sasaran: ${q.learningObjective}`"></p>
+            </template>
+            <p class="question-prompt" :id="`q-prompt-${q.id}`" x-text="q.prompt"></p>
+            <fieldset class="options" :aria-labelledby="`q-prompt-${q.id}`">
+              <template x-for="opt in q.options || []" :key="opt.key">
+                <label class="option" :class="quizSelections[q.id] === opt.key ? 'is-selected' : ''">
+                  <input
+                    type="radio"
+                    :name="`q-${q.id}`"
+                    :value="opt.key"
+                    x-model="quizSelections[q.id]"
+                    @change="saveDraftProgress()"
+                  />
+                  <span class="option-key" x-text="opt.key" aria-hidden="true"></span>
+                  <span x-text="opt.text"></span>
+                </label>
+              </template>
+            </fieldset>
+          </article>
         </template>
-        <p class="question-prompt" :id="`q-prompt-${q.id}`" x-text="q.prompt"></p>
-        <fieldset class="options" :aria-labelledby="`q-prompt-${q.id}`">
-          <template x-for="opt in q.options || []" :key="opt.key">
-            <label class="option" :class="quizSelections[q.id] === opt.key ? 'is-selected' : ''">
-              <input
-                type="radio"
-                :name="`q-${q.id}`"
-                :value="opt.key"
-                x-model="quizSelections[q.id]"
-                @change="saveDraftProgress()"
-              />
-              <span class="option-key" x-text="opt.key" aria-hidden="true"></span>
-              <span x-text="opt.text"></span>
-            </label>
-          </template>
-        </fieldset>
-      </article>
+      </div>
     </template>
   </div>
 
-  <div class="quiz-footer">
+  <!-- QUIZ FOOTER (Hanya tampil saat tahap pengerjaan soal) -->
+  <div class="quiz-footer" x-show="activeQuestionSet?.setType !== 'remedial' || remedialRunnerStep === 'quiz' || !activeQuestionSet?.metadata?.diagnosticFeedback">
     <div class="quiz-footer-inner">
       <div class="grow stack-xs">
         <div class="meter meter--thin" role="progressbar" :aria-valuenow="answeredCount" aria-valuemin="0" :aria-valuemax="activeQuestionSet?.questions?.length || 0" aria-label="Soal terjawab">
