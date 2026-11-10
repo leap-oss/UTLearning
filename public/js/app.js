@@ -574,14 +574,29 @@ document.addEventListener('alpine:init', () => {
 
         this.clearStagedFiles();
         const targetModuleId = this.activeModule.id;
-        await this.pollAiJobUntilDone(data.jobId, 'Mengekstrak teks & struktur halaman BMP...', async (jobResult) => {
-          const modIdToOpen = targetModuleId || jobResult?.resultRefs?.moduleId || jobResult?.targetId;
-          if (modIdToOpen) {
-            await this.openModule(modIdToOpen, 'sources');
+        await this.pollAiJobUntilDone(
+          data.jobId,
+          'Mengekstrak teks & struktur halaman BMP...',
+          async (jobResult) => {
+            const modIdToOpen = targetModuleId || jobResult?.resultRefs?.moduleId || jobResult?.targetId;
+            if (modIdToOpen) {
+              await this.openModule(modIdToOpen, 'sources');
+            }
+            await this.refreshSystemStatus();
+            this.showNotice('Ekstraksi selesai! Silakan periksa hasil ekstraksi sebelum membuat Study Pack.');
+          },
+          async () => {
+            // live refresh sumber selama proses masih jalan
+            if (this.activeModule?.id === targetModuleId && this.currentView === 'module') {
+              try {
+                const { ok, data: mod } = await this.fetchJson(`/api/modules/${targetModuleId}`, { headers: { Accept: 'application/json' } });
+                if (ok && mod) {
+                  this.activeModule = mod;
+                }
+              } catch (_) { /* silent */ }
+            }
           }
-          await this.refreshSystemStatus();
-          this.showNotice('Ekstraksi selesai! Silakan periksa hasil ekstraksi sebelum membuat Study Pack.');
-        });
+        );
       } catch (err) {
         this.showError(err instanceof Error ? err.message : 'Gagal menjalankan ekstraksi.');
       }
@@ -656,21 +671,27 @@ document.addEventListener('alpine:init', () => {
       }
     },
 
-    async removeSourceAsset(source) {
-      try {
-        const res = await fetch(`/api/sources/${source.id}`, {
-          method: 'DELETE',
-          headers: { Accept: 'application/json' },
-        });
-        const data = await res.json();
-        if (!res.ok) {
-          throw new Error(data.message || 'Gagal menghapus sumber.');
-        }
-        await this.openModule(this.activeModule.id, 'sources');
-        this.showNotice('Sumber halaman berhasil dihapus.');
-      } catch (err) {
-        this.showError(err instanceof Error ? err.message : 'Gagal menghapus sumber.');
-      }
+    confirmDeleteSource(source) {
+      const pageLabel = `Hal. ${source.pageOrder}${source.label ? ` (${source.label})` : ''}`;
+      this.confirmDialog = {
+        open: true,
+        title: `Hapus ${pageLabel}?`,
+        message: `Halaman ini akan dihapus permanen dari modul. Teks hasil ekstraksi akan hilang dan tidak bisa dikembalikan.`,
+        confirmLabel: 'Ya, Hapus',
+        processing: false,
+        onConfirm: async () => {
+          const res = await fetch(`/api/sources/${source.id}`, {
+            method: 'DELETE',
+            headers: { Accept: 'application/json' },
+          });
+          const data = await res.json();
+          if (!res.ok) {
+            throw new Error(data.message || 'Gagal menghapus sumber.');
+          }
+          await this.openModule(this.activeModule.id, 'sources');
+          this.showNotice(`${pageLabel} berhasil dihapus.`);
+        },
+      };
     },
 
     // ==================== STUDY PACK & QUIZ SYNTHESIS ====================
@@ -992,7 +1013,7 @@ document.addEventListener('alpine:init', () => {
     },
 
     // ==================== AI JOB POLLING ====================
-    async pollAiJobUntilDone(jobId, label, onSuccess) {
+    async pollAiJobUntilDone(jobId, label, onSuccess, onProgress = null) {
       if (this.pollingTimer) {
         clearTimeout(this.pollingTimer);
       }
@@ -1014,9 +1035,14 @@ document.addEventListener('alpine:init', () => {
             throw new Error(`Gagal memeriksa status job (${res.status})`);
           }
           const job = await res.json();
+          const statusLabel = {
+            queued: 'Menunggu antrian…',
+            processing: 'Sedang diproses…',
+            retrying: 'Mencoba ulang…',
+          }[job.status] || job.status;
           this.activeAiJob = {
             ...this.activeAiJob,
-            status: job.status,
+            status: statusLabel,
             attemptCount: job.attemptCount,
             maxAttempts: job.maxAttempts,
           };
@@ -1037,6 +1063,9 @@ document.addEventListener('alpine:init', () => {
             return;
           }
 
+          if (onProgress) {
+            try { await onProgress(); } catch (_) { /* silent */ }
+          }
           this.pollingTimer = setTimeout(pollOnce, 1200);
         } catch (err) {
           this.activeAiJob = null;

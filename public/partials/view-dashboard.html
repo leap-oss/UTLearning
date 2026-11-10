@@ -52,17 +52,13 @@
     </div>
   </template>
 
-  <div x-show="filteredCourses.length > 0" class="ledger">
-    <div class="ledger-head course-row" aria-hidden="true">
-      <span>Mata kuliah</span>
-      <span>Progres modul</span>
-      <span></span>
-    </div>
+  <div x-show="filteredCourses.length > 0" class="course-grid">
 
     <template x-for="course in filteredCourses" :key="course.id">
-      <article class="ledger-row ledger-row--link course-row row-anchor">
-        <div class="stack-xs">
-          <div class="cluster cluster--tight">
+      <article class="course-card row-anchor">
+        <!-- header card: kode + badge semester + badge arsip + menu kelola -->
+        <div class="course-card__head">
+          <div class="cluster cluster--tight" style="min-width:0;flex:1">
             <span class="code" x-text="course.code"></span>
             <template x-if="course.semesterLabel">
               <span class="tag tag--semester" x-text="formatSemester(course.semesterLabel)"></span>
@@ -71,53 +67,45 @@
               <span class="tag">Diarsipkan</span>
             </template>
           </div>
-          <h2 class="sub-title" style="font-weight: 400">
-            <button type="button" class="row-title" @click="openCourse(course.id)" x-text="course.name"></button>
-          </h2>
-          <p class="meta">
-            Aktivitas terakhir <span x-text="formatDateTime(course.lastActivityAt)"></span>
-          </p>
+          <!-- menu kelola (pindah dari row-actions ke sini, z-index sudah ada di .row-actions) -->
+          <div class="row-actions">
+            <div class="menu" x-data="{ open: false }" @click.outside="open = false" @keydown.escape="open = false">
+              <button type="button" class="btn btn--ghost btn--sm" @click="open = !open" :aria-expanded="open.toString()" aria-haspopup="menu" :aria-label="`Kelola ${course.name}`">Kelola</button>
+              <div class="menu-panel" x-show="open" x-transition.opacity.duration.120ms role="menu" @click="open = false">
+                <button type="button" role="menuitem" class="menu-item" @click="openEditCourseModal(course)">Edit mata kuliah</button>
+                <template x-if="course.status !== 'archived'">
+                  <button type="button" role="menuitem" class="menu-item menu-item--danger" @click="confirmArchiveCourse(course)">Arsipkan</button>
+                </template>
+                <template x-if="course.status === 'archived'">
+                  <button type="button" role="menuitem" class="menu-item" @click="restoreCourse(course)">Pulihkan</button>
+                </template>
+              </div>
+            </div>
+          </div>
         </div>
 
-        <div class="stack-xs">
-          <div
-            class="meter"
-            role="img"
-            :aria-label="`${statusSegments(course.moduleCounts).mastered} dikuasai, ${statusSegments(course.moduleCounts).inProgress} sedang dipelajari, ${statusSegments(course.moduleCounts).needsReview} perlu review dari ${statusSegments(course.moduleCounts).total} modul`"
-          >
+        <!-- nama kursus sebagai tombol (row-title + ::after overlay) -->
+        <h2 class="course-card__name">
+          <button type="button" class="row-title" @click="openCourse(course.id)" x-text="course.name"></button>
+        </h2>
+
+        <!-- progress meter -->
+        <div class="course-card__meter">
+          <div class="meter" role="img" :aria-label="`${statusSegments(course.moduleCounts).mastered} dikuasai, ${statusSegments(course.moduleCounts).inProgress} sedang dipelajari, ${statusSegments(course.moduleCounts).needsReview} perlu review dari ${statusSegments(course.moduleCounts).total} modul`">
             <div class="meter-seg meter-seg--mastered" :style="`width: ${statusSegments(course.moduleCounts).masteredPct}%`"></div>
             <div class="meter-seg meter-seg--progress" :style="`width: ${statusSegments(course.moduleCounts).inProgressPct}%`"></div>
             <div class="meter-seg meter-seg--review" :style="`width: ${statusSegments(course.moduleCounts).needsReviewPct}%`"></div>
           </div>
           <p class="meta">
             <strong class="figure" x-text="course.moduleCounts?.total ?? 0"></strong>
-            dari <span class="figure" x-text="course.expectedModuleCount || 9"></span> modul terdaftar<template x-if="(course.moduleCounts?.mastered || 0) > 0"><span>, <span class="figure" x-text="course.moduleCounts.mastered"></span> dikuasai</span></template><template x-if="(course.moduleCounts?.needs_review || 0) > 0"><span>, <span class="figure" x-text="course.moduleCounts.needs_review"></span> perlu review</span></template>
+            dari <span class="figure" x-text="course.expectedModuleCount || 9"></span> modul
+            <template x-if="(course.moduleCounts?.mastered || 0) > 0"><span>, <span class="figure" x-text="course.moduleCounts.mastered"></span> dikuasai</span></template>
+            <template x-if="(course.moduleCounts?.needs_review || 0) > 0"><span>, <span class="figure" x-text="course.moduleCounts.needs_review"></span> perlu review</span></template>
           </p>
         </div>
 
-        <div class="row-actions">
-          <div class="menu" x-data="{ open: false }" @click.outside="open = false" @keydown.escape="open = false">
-            <button
-              type="button"
-              class="btn btn--ghost btn--sm"
-              @click="open = !open"
-              :aria-expanded="open.toString()"
-              aria-haspopup="menu"
-              :aria-label="`Kelola ${course.name}`"
-            >
-              Kelola
-            </button>
-            <div class="menu-panel" x-show="open" x-transition.opacity.duration.120ms role="menu" @click="open = false">
-              <button type="button" role="menuitem" class="menu-item" @click="openEditCourseModal(course)">Edit mata kuliah</button>
-              <template x-if="course.status !== 'archived'">
-                <button type="button" role="menuitem" class="menu-item menu-item--danger" @click="confirmArchiveCourse(course)">Arsipkan</button>
-              </template>
-              <template x-if="course.status === 'archived'">
-                <button type="button" role="menuitem" class="menu-item" @click="restoreCourse(course)">Pulihkan</button>
-              </template>
-            </div>
-          </div>
-        </div>
+        <!-- footer: last activity -->
+        <p class="course-card__foot meta">Aktif <span x-text="formatDateTime(course.lastActivityAt)"></span></p>
       </article>
     </template>
   </div>

@@ -20,40 +20,60 @@
 
   <section aria-labelledby="health-heading" class="stack-md">
     <h2 id="health-heading" class="section-title">Layanan</h2>
-    <dl class="glossary">
-      <div>
-        <dt>Server</dt>
-        <dd>
-          <span :class="health?.status === 'ok' ? 'state state--ok' : 'state state--empty'" x-text="health?.status === 'ok' ? 'Aktif' : 'Memuat'"></span>
-          <span class="meta">Node <span class="figure" x-text="health?.server?.nodeVersion || 'tidak diketahui'"></span></span>
-        </dd>
+    <div class="status-grid">
+
+      <!-- Server -->
+      <div class="status-card">
+        <div class="status-card__label">Server</div>
+        <div class="status-card__indicator">
+          <span :class="health?.status === 'ok' ? 'state state--ok' : 'state state--empty'" aria-hidden="true"></span>
+          <span class="status-card__value" x-text="health?.status === 'ok' ? 'Aktif' : 'Memuat…'"></span>
+        </div>
+        <p class="status-card__meta meta">Node <span class="figure" x-text="health?.server?.nodeVersion || '—'"></span></p>
       </div>
-      <div>
-        <dt>Basis data</dt>
-        <dd>
-          <span :class="health?.database?.connected ? 'state state--ok' : 'state state--review'" x-text="health?.database?.connected ? 'Terhubung' : 'Tidak terhubung'"></span>
-          <span class="meta" x-show="health?.database?.latencyMs != null">Latensi <span class="figure" x-text="`${health?.database?.latencyMs} ms`"></span></span>
-          <span class="meta" x-show="!health?.database?.connected" x-text="health?.database?.status || ''"></span>
-        </dd>
+
+      <!-- Database -->
+      <div class="status-card">
+        <div class="status-card__label">Basis data</div>
+        <div class="status-card__indicator">
+          <span :class="health?.database?.connected ? 'state state--ok' : 'state state--review'" aria-hidden="true"></span>
+          <span class="status-card__value" x-text="health?.database?.connected ? 'Terhubung' : 'Tidak terhubung'"></span>
+        </div>
+        <p class="status-card__meta meta">
+          <template x-if="health?.database?.latencyMs != null">
+            <span>Latensi <span class="figure" x-text="`${health.database.latencyMs} ms`"></span></span>
+          </template>
+          <template x-if="!health?.database?.connected">
+            <span x-text="health?.database?.status || ''"></span>
+          </template>
+        </p>
       </div>
-      <div>
-        <dt>Gemini API</dt>
-        <dd>
-          <span :class="health?.ai?.apiKeyConfigured ? 'state state--ok' : 'state state--review'" x-text="health?.ai?.apiKeyConfigured ? (health?.ai?.apiKeyCount > 1 ? `${health?.ai?.apiKeyCount} Kunci API aktif (Pool)` : 'Kunci API terpasang') : 'Kunci API belum diatur'"></span>
-          <span class="meta">
-            Model <span class="code" x-text="health?.ai?.model || 'belum diatur'"></span>, penalaran
-            <span x-text="health?.ai?.thinkingLevel || 'low'"></span>, pencarian web
-            <span x-text="health?.ai?.googleSearchEnabled ? 'aktif' : 'nonaktif'"></span>
-          </span>
-        </dd>
+
+      <!-- Gemini API -->
+      <div class="status-card">
+        <div class="status-card__label">Gemini API</div>
+        <div class="status-card__indicator">
+          <span :class="health?.ai?.apiKeyConfigured ? 'state state--ok' : 'state state--review'" aria-hidden="true"></span>
+          <span class="status-card__value" x-text="health?.ai?.apiKeyConfigured ? (health?.ai?.apiKeyCount > 1 ? `${health.ai.apiKeyCount} kunci aktif (Pool)` : 'Kunci terpasang') : 'Kunci belum diatur'"></span>
+        </div>
+        <p class="status-card__meta meta">
+          Model <span class="code" x-text="health?.ai?.model || '—'"></span> &middot;
+          penalaran <span x-text="health?.ai?.thinkingLevel || 'low'"></span> &middot;
+          web <span x-text="health?.ai?.googleSearchEnabled ? 'aktif' : 'nonaktif'"></span>
+        </p>
       </div>
-      <div>
-        <dt>Antrean AI</dt>
-        <dd>
-          <span class="meta" x-text="health?.ai?.queue ? `${health.ai.queue.activeCount} berjalan, ${health.ai.queue.queuedCount} menunggu` : 'Tidak diketahui'"></span>
-        </dd>
+
+      <!-- Antrean AI -->
+      <div class="status-card">
+        <div class="status-card__label">Antrean AI</div>
+        <div class="status-card__indicator">
+          <span :class="(health?.ai?.queue?.activeCount || 0) > 0 ? 'state state--progress' : 'state state--ok'" aria-hidden="true"></span>
+          <span class="status-card__value" x-text="health?.ai?.queue ? `${health.ai.queue.activeCount} berjalan` : '—'"></span>
+        </div>
+        <p class="status-card__meta meta" x-text="health?.ai?.queue ? `${health.ai.queue.queuedCount} menunggu` : ''"></p>
       </div>
-    </dl>
+
+    </div>
   </section>
 
   <section x-show="usageSummary" class="stack-md" aria-labelledby="usage-heading">

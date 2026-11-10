@@ -38,16 +38,16 @@
 <!-- ==================== FEEDBACK (toasts) ==================== -->
 <div class="toast-region">
   <template x-if="activeAiJob">
-    <div class="toast toast--job" role="status" aria-live="polite">
-      <div class="stack-2xs">
-        <div class="cluster cluster--tight">
-          <span class="spinner keep-motion" aria-hidden="true"></span>
+    <div class="toast toast--job" role="status" aria-live="polite" aria-atomic="true">
+      <div class="cluster cluster--tight" style="min-width:0">
+        <span class="spinner keep-motion" aria-hidden="true"></span>
+        <div class="stack-2xs" style="min-width:0">
           <span class="sub-title" x-text="activeAiJob.label"></span>
+          <p class="meta">
+            Percobaan <span class="figure" x-text="`${activeAiJob.attemptCount || 1}/${activeAiJob.maxAttempts || 3}`"></span>
+            &middot; <span x-text="activeAiJob.status"></span>
+          </p>
         </div>
-        <p class="meta">
-          Status <span class="figure" x-text="activeAiJob.status"></span>, percobaan
-          <span class="figure" x-text="`${activeAiJob.attemptCount || 1}/${activeAiJob.maxAttempts || 3}`"></span>
-        </p>
       </div>
     </div>
   </template>
