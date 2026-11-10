@@ -1133,37 +1133,55 @@ label.checklist-item { cursor: pointer; }
 
 .takeaways li::marker { color: var(--color-faint); }
 
+/* Glossary: each <div> wrapping a dt/dd pair is one row (term | definition) */
 .glossary {
-  display: grid;
-  grid-template-columns: minmax(8rem, 13rem) minmax(0, 1fr);
+  display: flex;
+  flex-direction: column;
+  margin: 0;
   border-top: var(--rule-hair) solid var(--color-rule-2);
 }
 
-.glossary dt,
-.glossary dd {
-  padding-block: var(--space-md);
+.glossary > div {
+  display: grid;
+  grid-template-columns: minmax(9rem, 14rem) minmax(0, 1fr);
+  column-gap: var(--space-xl);
+  row-gap: var(--space-xs);
+  align-items: baseline;
+  padding-block: var(--space-lg);
   border-bottom: var(--rule-hair) solid var(--color-rule);
 }
 
 .glossary dt {
-  padding-right: var(--space-lg);
+  margin: 0;
   font-family: var(--font-display);
   font-size: var(--text-lg);
+  line-height: 1.35;
   color: var(--color-ink);
+  overflow-wrap: anywhere;
 }
 
 .glossary dd {
+  margin: 0;
   display: flex;
   flex-direction: column;
-  gap: var(--space-xs);
+  gap: var(--space-sm);
   font-size: var(--text-md);
-  line-height: 1.6;
+  line-height: 1.65;
   color: var(--color-ink-2);
+  max-width: var(--measure);
+}
+
+.glossary dd p { margin: 0; }
+
+/* AI analogy: set apart from the BMP definition */
+.glossary dd p.meta {
+  padding-left: var(--space-md);
+  border-left: 2px solid var(--color-accent);
+  line-height: 1.55;
 }
 
 @media (max-width: 40rem) {
-  .glossary { grid-template-columns: minmax(0, 1fr); }
-  .glossary dt { padding-bottom: 0; border-bottom: 0; }
+  .glossary > div { grid-template-columns: minmax(0, 1fr); }
 }
 
 /* Source text review */

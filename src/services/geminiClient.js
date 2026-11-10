@@ -1,23 +1,122 @@
+import dotenv from 'dotenv';
 import { GoogleGenAI } from '@google/genai';
-import { getEnvConfig } from '../config/env.js';
+import { getEnvConfig, parseApiKeys } from '../config/env.js';
 
-let clientInstance = null;
-let cachedApiKey = null;
+export function maskApiKey(key) {
+  if (!key || key.length <= 8) return '***';
+  return `${key.slice(0, 4)}...${key.slice(-4)}`;
+}
+
+export class GeminiApiKeyPool {
+  constructor() {
+    this.keys = [];
+    this.currentIndex = 0;
+    this.clientCache = new Map();
+    this.cooldowns = new Map(); // key -> number (timestamp)
+  }
+
+  sync() {
+    if (process.env.NODE_ENV !== 'test') {
+      try {
+        dotenv.config({ override: true });
+      } catch {
+        // Ignore in environments where .env is not readable
+      }
+    }
+    const unique = parseApiKeys(process.env);
+    if (unique.length !== this.keys.length || !unique.every((k, i) => k === this.keys[i])) {
+      this.keys = unique;
+      if (this.currentIndex >= this.keys.length) {
+        this.currentIndex = 0;
+      }
+    }
+    return this.keys;
+  }
+
+  getKeys() {
+    return this.sync();
+  }
+
+  getKeyCount() {
+    return this.sync().length;
+  }
+
+  getActiveKeyInfo() {
+    this.sync();
+    if (this.keys.length === 0) {
+      const err = new Error('GEMINI_API_KEY belum dikonfigurasi di .env');
+      err.status = 401;
+      throw err;
+    }
+
+    const now = Date.now();
+    for (let offset = 0; offset < this.keys.length; offset++) {
+      const idx = (this.currentIndex + offset) % this.keys.length;
+      const key = this.keys[idx];
+      const cooldownUntil = this.cooldowns.get(key) || 0;
+      if (cooldownUntil <= now) {
+        this.currentIndex = idx;
+        return {
+          key,
+          index: idx,
+          total: this.keys.length,
+          allOnCooldown: false,
+        };
+      }
+    }
+
+    let minCd = Infinity;
+    let bestIdx = 0;
+    for (let i = 0; i < this.keys.length; i++) {
+      const cd = this.cooldowns.get(this.keys[i]) || 0;
+      if (cd < minCd) {
+        minCd = cd;
+        bestIdx = i;
+      }
+    }
+    this.currentIndex = bestIdx;
+    return {
+      key: this.keys[bestIdx],
+      index: bestIdx,
+      total: this.keys.length,
+      allOnCooldown: true,
+      retryAfterMs: Math.max(1000, minCd - now),
+    };
+  }
+
+  getClientForKey(key) {
+    let client = this.clientCache.get(key);
+    if (!client) {
+      client = new GoogleGenAI({ apiKey: key });
+      this.clientCache.set(key, client);
+    }
+    return client;
+  }
+
+  markCooldown(key, durationMs = 60000) {
+    this.cooldowns.set(key, Date.now() + durationMs);
+    if (this.keys.length > 1) {
+      this.currentIndex = (this.currentIndex + 1) % this.keys.length;
+    }
+  }
+
+  markSuccess(key) {
+    this.cooldowns.delete(key);
+  }
+
+  reset() {
+    this.keys = [];
+    this.currentIndex = 0;
+    this.clientCache.clear();
+    this.cooldowns.clear();
+  }
+}
+
+export const defaultApiKeyPool = new GeminiApiKeyPool();
 
 export function getGeminiClient() {
-  const apiKey = (process.env.GEMINI_API_KEY || '').trim();
-  if (!apiKey) {
-    const err = new Error('GEMINI_API_KEY belum dikonfigurasi di .env');
-    err.status = 401;
-    throw err;
-  }
-
-  if (!clientInstance || cachedApiKey !== apiKey) {
-    cachedApiKey = apiKey;
-    clientInstance = new GoogleGenAI({ apiKey });
-  }
-
-  return clientInstance;
+  const info = defaultApiKeyPool.getActiveKeyInfo();
+  return defaultApiKeyPool.getClientForKey(info.key);
 }
 
 export function getMaxOutputTokensForTask(taskType) {
@@ -73,6 +172,49 @@ export function buildThinkingConfig(modelName, levelInput) {
   return undefined;
 }
 
+export function repairTruncatedJson(rawText) {
+  let s = String(rawText || '').trim();
+  let inString = false;
+  let escape = false;
+  const stack = [];
+
+  for (let i = 0; i < s.length; i++) {
+    const ch = s[i];
+    if (inString) {
+      if (escape) {
+        escape = false;
+      } else if (ch === '\\') {
+        escape = true;
+      } else if (ch === '"') {
+        inString = false;
+      }
+    } else {
+      if (ch === '"') {
+        inString = true;
+      } else if (ch === '{' || ch === '[') {
+        stack.push(ch);
+      } else if (ch === '}' || ch === ']') {
+        if (stack.length > 0) stack.pop();
+      }
+    }
+  }
+
+  if (inString) {
+    s += '"';
+  }
+
+  // Remove trailing dangling colons or commas
+  s = s.replace(/:\s*$/, ': null').replace(/,\s*$/, '');
+
+  while (stack.length > 0) {
+    const open = stack.pop();
+    if (open === '{') s += '}';
+    else if (open === '[') s += ']';
+  }
+
+  return s;
+}
+
 export function cleanAndParseJson(rawText) {
   let cleaned = String(rawText || '').trim();
 
@@ -84,13 +226,24 @@ export function cleanAndParseJson(rawText) {
   try {
     return JSON.parse(cleaned);
   } catch (firstErr) {
-    // Fallback: extract outermost JSON object {...}
+    // Fallback 1: extract outermost JSON object {...}
     const firstBrace = cleaned.indexOf('{');
     const lastBrace = cleaned.lastIndexOf('}');
     if (firstBrace !== -1 && lastBrace > firstBrace) {
-      return JSON.parse(cleaned.slice(firstBrace, lastBrace + 1));
+      try {
+        return JSON.parse(cleaned.slice(firstBrace, lastBrace + 1));
+      } catch {
+        // Continue to truncation repair
+      }
     }
-    throw firstErr;
+
+    // Fallback 2: attempt repairing truncated JSON
+    try {
+      const repaired = repairTruncatedJson(cleaned);
+      return JSON.parse(repaired);
+    } catch {
+      throw firstErr;
+    }
   }
 }
 
@@ -113,10 +266,10 @@ export async function generateStructuredContent({
   zodSchema,
   thinkingLevel = null,
   enableGoogleSearch = false,
+  model: modelOverride = null,
 }) {
-  const ai = getGeminiClient();
   const envConfig = getEnvConfig();
-  const model = envConfig.geminiModel || 'gemini-3.5-flash';
+  const model = modelOverride || envConfig.geminiModel || 'gemini-3.5-flash';
   const maxOutputTokens = getMaxOutputTokensForTask(taskType);
   const effectiveThinkingLevel = thinkingLevel || envConfig.geminiThinkingLevel;
   const thinkingConfig = buildThinkingConfig(model, effectiveThinkingLevel);
@@ -143,73 +296,121 @@ export async function generateStructuredContent({
     generationConfig.tools = [{ googleSearch: {} }];
   }
 
-  let response;
-  try {
-    response = await ai.models.generateContent({
-      model,
-      contents,
-      config: generationConfig,
-    });
-  } catch (err) {
-    const errMsg = String(err?.message || '').toLowerCase();
-    if (
-      useSearch &&
-      generationConfig.responseSchema &&
-      (errMsg.includes('response_schema') ||
-        errMsg.includes('response schema') ||
-        errMsg.includes('grounding') ||
-        errMsg.includes('not supported with'))
-    ) {
-      const fallbackConfig = { ...generationConfig };
-      delete fallbackConfig.responseSchema;
-      response = await ai.models.generateContent({
-        model,
-        contents,
-        config: fallbackConfig,
-      });
-    } else {
-      throw err;
-    }
-  }
-
-  const usageMetadata = response?.usageMetadata || null;
-  const rawText = typeof response?.text === 'string' ? response.text : '';
-
-  if (!rawText.trim()) {
-    const err = new Error('Model AI mengembalikan respons kosong.');
-    err.errorCode = 'OUTPUT_SCHEMA_INVALID';
-    err.usageMetadata = usageMetadata;
+  const pool = defaultApiKeyPool;
+  const keys = pool.getKeys();
+  if (keys.length === 0) {
+    const err = new Error('GEMINI_API_KEY belum dikonfigurasi di .env');
+    err.status = 401;
     throw err;
   }
 
-  let parsedJson;
-  try {
-    parsedJson = cleanAndParseJson(rawText);
-  } catch (parseErr) {
-    const err = new Error(`Output AI bukan JSON valid: ${parseErr.message}`);
-    err.errorCode = 'OUTPUT_SCHEMA_INVALID';
-    err.usageMetadata = usageMetadata;
-    throw err;
-  }
+  const maxAttempts = Math.max(1, keys.length);
+  let lastErr = null;
 
-  if (zodSchema) {
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    const keyInfo = pool.getActiveKeyInfo();
+    const ai = pool.getClientForKey(keyInfo.key);
+
+    let response;
     try {
-      parsedJson = zodSchema.parse(parsedJson);
-    } catch (zodErr) {
-      const issuesSummary = Array.isArray(zodErr?.issues)
-        ? zodErr.issues.map((i) => `${(i.path || []).join('.')}: ${i.message}`).join('; ')
-        : zodErr.message;
-      const err = new Error(`Validasi skema gagal: ${issuesSummary}`);
+      try {
+        response = await ai.models.generateContent({
+          model,
+          contents,
+          config: generationConfig,
+        });
+      } catch (err) {
+        const errMsg = String(err?.message || '').toLowerCase();
+        if (
+          useSearch &&
+          generationConfig.responseSchema &&
+          (errMsg.includes('response_schema') ||
+            errMsg.includes('response schema') ||
+            errMsg.includes('grounding') ||
+            errMsg.includes('not supported with'))
+        ) {
+          const fallbackConfig = { ...generationConfig };
+          delete fallbackConfig.responseSchema;
+          response = await ai.models.generateContent({
+            model,
+            contents,
+            config: fallbackConfig,
+          });
+        } else {
+          throw err;
+        }
+      }
+    } catch (apiErr) {
+      lastErr = apiErr;
+      const status =
+        Number(apiErr?.status || apiErr?.httpStatus || apiErr?.statusCode || apiErr?.code) || null;
+      const errMsg = String(apiErr?.message || '').toLowerCase();
+      const isQuotaOrRateLimit =
+        status === 429 ||
+        errMsg.includes('quota') ||
+        errMsg.includes('resource_exhausted') ||
+        errMsg.includes('rate_limit') ||
+        errMsg.includes('rate limit');
+
+      if (isQuotaOrRateLimit && keys.length > 1 && attempt < maxAttempts - 1) {
+        const isDaily =
+          errMsg.includes('per day') || errMsg.includes('daily') || errMsg.includes('rpd');
+        const cooldownMs = isDaily ? 60 * 60 * 1000 : 30 * 1000;
+        console.warn(
+          `[geminiClient] API Key #${keyInfo.index + 1}/${keyInfo.total} (${maskApiKey(keyInfo.key)}) terkena ${isDaily ? 'kuota harian habis (RPD)' : 'rate limit sementara (RPM)'}. Beralih otomatis ke API key #${((keyInfo.index + 1) % keyInfo.total) + 1}...`
+        );
+        pool.markCooldown(keyInfo.key, cooldownMs);
+        continue;
+      }
+
+      throw apiErr;
+    }
+
+    pool.markSuccess(keyInfo.key);
+
+    const usageMetadata = response?.usageMetadata || null;
+    const rawText = typeof response?.text === 'string' ? response.text : '';
+
+    if (!rawText.trim()) {
+      const err = new Error('Model AI mengembalikan respons kosong.');
       err.errorCode = 'OUTPUT_SCHEMA_INVALID';
       err.usageMetadata = usageMetadata;
       throw err;
     }
+
+    let parsedJson;
+    try {
+      parsedJson = cleanAndParseJson(rawText);
+    } catch (parseErr) {
+      const err = new Error(`Output AI bukan JSON valid: ${parseErr.message}`);
+      err.errorCode = 'OUTPUT_SCHEMA_INVALID';
+      err.usageMetadata = usageMetadata;
+      throw err;
+    }
+
+    if (zodSchema) {
+      try {
+        parsedJson = zodSchema.parse(parsedJson);
+      } catch (zodErr) {
+        const issuesSummary = Array.isArray(zodErr?.issues)
+          ? zodErr.issues.map((i) => `${(i.path || []).join('.')}: ${i.message}`).join('; ')
+          : zodErr.message;
+        const err = new Error(`Validasi skema gagal: ${issuesSummary}`);
+        err.errorCode = 'OUTPUT_SCHEMA_INVALID';
+        err.usageMetadata = usageMetadata;
+        throw err;
+      }
+    }
+
+    return {
+      data: parsedJson,
+      usageMetadata,
+      model,
+      searchGroundingUsed: useSearch,
+      activeKeyIndex: keyInfo.index,
+      totalKeys: keyInfo.total,
+    };
   }
 
-  return {
-    data: parsedJson,
-    usageMetadata,
-    model,
-    searchGroundingUsed: useSearch,
-  };
+  throw lastErr;
 }

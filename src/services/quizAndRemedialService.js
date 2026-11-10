@@ -744,7 +744,7 @@ export async function enqueueRemedialGeneration({
 
   const boundedQuestionCount = questionCount ? Math.min(20, Math.max(2, Number(questionCount))) : null;
   const config = getEnvConfig();
-  const model = config.geminiModel || 'gemini-2.5-flash';
+  const model = config.geminiModel || 'gemini-3.5-flash';
 
   const cacheKey = buildCacheKey({
     operation: 'generate_remedial',
@@ -977,7 +977,7 @@ export async function enqueueCourseExamSimulation({
   }));
 
   const config = getEnvConfig();
-  const model = config.geminiModel || 'gemini-2.5-flash';
+  const model = config.geminiModel || 'gemini-3.5-flash';
 
   const inputSignature = {
     courseId,

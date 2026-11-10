@@ -503,17 +503,46 @@ export function validateAndAlignStudyPack(parsed, reviewedSources = []) {
       }
 
       if (matchedTopic) {
-        if (q.learningObjective && !matchedTopic.learningObjectives.includes(q.learningObjective)) {
-          matchedTopic.learningObjectives.push(q.learningObjective);
-        }
-
         if (!q.sourceRefs || q.sourceRefs.length === 0) {
           q.sourceRefs = matchedTopic.sourceRefs || fallbackSourceRef;
         }
 
+        const STOPWORDS = new Set([
+          'memahami', 'menjelaskan', 'mengidentifikasi', 'menganalisis', 'menerapkan',
+          'membedakan', 'menguraikan', 'menyebutkan', 'konsep', 'pengertian', 'prinsip',
+          'contoh', 'penerapan', 'model', 'layanan', 'dalam', 'untuk', 'yang', 'dari',
+          'pada', 'dengan', 'atau', 'serta', 'antara', 'sebagai', 'melalui', 'dasar',
+          'utama', 'penting', 'bagian', 'faktor', 'strategi', 'peran', 'fungsi',
+        ]);
+
         const explanationText = (matchedTopic.detailedExplanation || '').toLowerCase();
         const objSnippet = (q.learningObjective || '').toLowerCase().trim();
-        const isCovered = objSnippet ? explanationText.includes(objSnippet) : true;
+        let isCovered = true;
+
+        if (objSnippet) {
+          if (explanationText.includes(objSnippet)) {
+            isCovered = true;
+          } else {
+            const keywords = objSnippet
+              .replace(/[^a-z0-9\s-]/gi, ' ')
+              .split(/\s+/)
+              .filter((w) => w.length >= 4 && !STOPWORDS.has(w));
+            if (keywords.length > 0) {
+              const matchedCount = keywords.filter((kw) => explanationText.includes(kw)).length;
+              isCovered =
+                matchedCount >= Math.min(2, keywords.length) ||
+                matchedCount / keywords.length >= 0.5;
+            }
+          }
+        }
+
+        if (
+          q.learningObjective &&
+          !matchedTopic.learningObjectives.includes(q.learningObjective) &&
+          (!isCovered || matchedTopic.learningObjectives.length < 3)
+        ) {
+          matchedTopic.learningObjectives.push(q.learningObjective);
+        }
 
         if (!isCovered && q.explanation) {
           matchedTopic.detailedExplanation += `\n\n${q.explanation}`;
@@ -580,26 +609,32 @@ export async function defaultStudyPackSynthesizer({
   const systemInstruction = `Anda adalah kurator dan arsitek penyusun bahan belajar komprehensif Universitas Terbuka (BMP) yang berfokus pada ketuntasan pemahaman mandiri mahasiswa.
 
 PRINSIP WAJIB:
-1. JANGAN MERINGKAS TERLALU PENDEK: Mahasiswa belajar mandiri menggunakan bahan ini. Setiap topik WAJIB diuraikan secara mendalam dan jelas (minimal 2-3 paragraf naratif per topik di "detailedExplanation"), bukan sekadar 1-2 kalimat ringkasan umum.
-2. PEMISAHAN KONTEN OTENTIK BMP VS BANTUAN AI:
-   - "bmpSummary", "detailedExplanation", "coreConcepts", "comparisons", "processesOrStages": HANYA berasal dari materi sumber BMP yang telah direview. Pertahankan istilah asli BMP.
+1. JANGAN MERINGKAS TERLALU PENDEK: Mahasiswa belajar mandiri menggunakan bahan ini. Setiap topik WAJIB diuraikan secara mendalam dan jelas (minimal 4-5 paragraf naratif yang komprehensif per topik di "detailedExplanation"), bukan sekadar ringkasan permukaan.
+2. BEDAH TUNTAS & REVERSE-ENGINEERING SELURUH SOAL TES FORMATIF (100% CAKUPAN WAJIB):
+   - Mahasiswa sering kali HANYA mengunggah halaman "Rangkuman" dan "Tes Formatif" (tanpa mengunggah puluhan halaman isi bab).
+   - Oleh karena itu, banyak konsep spesifik yang diujikan di soal "Tes Formatif" TIDAK tertulis di halaman "Rangkuman" singkat.
+   - Anda WAJIB membedah SETIAP butir soal yang ada di seluruh halaman Tes Formatif (misal Soal 1 s/d 10 pada Tes Formatif 1, Soal 1 s/d 10 pada Tes Formatif 2, dst.) dan mengubahnya menjadi materi pembelajaran utuh di dalam "detailedExplanation", "coreConcepts", "comparisons", "commonMisconceptions", dan "glossary"!
+   - DILARANG MELEWATKAN SATU PUN konsep dari nomor soal Tes Formatif yang diunggah.
+   - Untuk soal berbentuk pengecualian ("...kecuali..."), uraikan secara eksplisit seluruh faktor/unsur yang benar DAN jelaskan mengapa opsi pengecoh tersebut dikecualikan (masukkan ke "detailedExplanation" dan "commonMisconceptions").
+   - Untuk soal yang memiliki opsi istilah teknis berbeda pada pilihan A/B/C/D (misal dimensi informasi: Akurasi vs Relevansi vs Tepat Waktu vs Lengkap; atau layanan teknologi: IoT vs SaaS vs PaaS vs Big Data Analytics; atau prinsip keamanan: Confidentiality vs Integrity vs Availability vs Reliability), jelaskan definisi dan pembeda masing-masing istilah tersebut di "detailedExplanation", "comparisons", atau "glossary" sehingga mahasiswa memahami seluruh opsi, bukan sekadar menghafal kunci jawaban.
+3. PEMISAHAN KONTEN OTENTIK BMP VS BANTUAN AI:
+   - "bmpSummary", "detailedExplanation", "coreConcepts", "comparisons", "processesOrStages": Berisi sintesis lengkap dari halaman Rangkuman DAN hasil bedah konsep seluruh butir soal Tes Formatif BMP. Pertahankan istilah asli BMP.
    - "aiExplanation", "simpleAnalogy", "examples" (dengan isAiGenerated=true): Berisi analogi bahasa manusiawi, perumpamaan sehari-hari, dan contoh penerapan konkret untuk mempermudah pemahaman mahasiswa.
-3. STRUKTUR MATERI PER TOPIK:
-   - "topicLabel": Judul topik yang jelas.
-   - "learningObjectives": 1-3 sasaran pembelajaran spesifik.
-   - "coreConcepts": Konsep/definisi kunci yang harus dikuasai.
-   - "detailedExplanation": Uraian penjelasan mendalam (fakta, latar belakang, cara kerja, alasan penting).
+4. STRUKTUR MATERI PER TOPIK (PISAHKAN PER KEGIATAN BELAJAR):
+   - "topicLabel": Judul Kegiatan Belajar / Topik yang jelas.
+   - "learningObjectives": 3-5 sasaran pembelajaran spesifik yang merangkum Rangkuman & Tes Formatif KB tersebut.
+   - "coreConcepts": Seluruh konsep/definisi kunci dari Rangkuman & seluruh nomor Tes Formatif.
+   - "detailedExplanation": Uraian penjelasan mendalam (4-6 paragraf terstruktur yang mencakup semua konsep di Rangkuman + semua materi yang ditanyakan pada setiap nomor soal Tes Formatif).
    - "conceptRelationships": Keterhubungan atau ketergantungan antar konsep.
-   - "comparisons": Perbandingan terstruktur (itemA, itemB, distinction) jika ada istilah yang berpotensi tertukar.
-   - "processesOrStages": Alur langkah atau tahapan berurutan jika ada mekanisme prosedural.
-   - "commonMisconceptions": Miskonsepsi umum dan klarifikasi benarnya menurut BMP.
-   - "keyTakeaways": Poin-poin kesimpulan esensial.
-4. KESELARASAN PEDAGOGIS DENGAN SOAL (PEDAGOGICAL ALIGNMENT):
+   - "comparisons": Perbandingan terstruktur (itemA, itemB, distinction) untuk istilah-istilah yang berpotensi tertukar di soal Tes Formatif.
+   - "processesOrStages": Alur langkah, evolusi era, atau tahapan prosedural/manajemen.
+   - "commonMisconceptions": Miskonsepsi umum dan jebakan pengecualian ("kecuali") dari soal Tes Formatif beserta klarifikasi benarnya menurut BMP.
+   - "keyTakeaways": Poin-poin kesimpulan esensial yang lengkap.
+5. KESELARASAN PEDAGOGIS DENGAN SOAL (PEDAGOGICAL ALIGNMENT):
    - Seluruh ${questionCount} soal pada "initialQuestions" WAJIB bersumber dan DAPAT DIJAWAB dari penjelasan yang telah Anda tulis di "detailedExplanation", "coreConcepts", atau "glossary".
-   - DILARANG membuat soal yang menguji konsep di luar materi yang telah Anda jelaskan.
    - Setiap butir soal harus memiliki "learningObjective", "questionType" ('single_choice', 'conceptual_application', 'scenario_based'), "difficulty", "sourceRefs", dan "explanation".
-5. REFERENSI SUMBER ("sourceRefs"):
-   - Cantumkan referensi halaman BMP yang relevan (contoh: ["Halaman 1"]) pada setiap topik, istilah glosarium, dan butir soal.`;
+6. REFERENSI SUMBER ("sourceRefs"):
+   - Cantumkan referensi halaman BMP yang relevan (contoh: ["Halaman 1", "Halaman 3"]) pada setiap topik, istilah glosarium, dan butir soal.`;
 
   const sourceBlocks = reviewedSources
     .map((s) => {
@@ -607,11 +642,17 @@ PRINSIP WAJIB:
       const sectionsText = (ext.sections || [])
         .map((sec) => `[${sec.heading}]: ${sec.content}`)
         .join('\n');
+      const questionsText = (ext.transcribedQuestions || [])
+        .map((tq, idx) => {
+          const opts = (tq.options || []).map((o) => `${o.key}. ${o.text}`).join(' | ');
+          return `Soal ${idx + 1}: ${tq.prompt}${opts ? `\n   Opsi: ${opts}` : ''}${tq.answerHint ? `\n   Petunjuk: ${tq.answerHint}` : ''}`;
+        })
+        .join('\n');
       return `--- SUMBER [sourceId=${s.id} | Halaman=${s.pageOrder} | Label=${s.label} | File=${s.fileName}] ---
 Judul Halaman: ${ext.pageTitle || '-'}
 Teks Utama:
 ${ext.extractedText || ''}
-${sectionsText ? `Bagian Teks:\n${sectionsText}\n` : ''}Istilah Kunci: ${(ext.keyTerms || []).join(', ') || '-'}
+${sectionsText ? `Bagian Teks:\n${sectionsText}\n` : ''}${questionsText ? `Butir Soal Tes Formatif Terdeteksi:\n${questionsText}\n` : ''}Istilah Kunci: ${(ext.keyTerms || []).join(', ') || '-'}
 Rumus/Tabel: ${(ext.formulasOrTables || []).join('; ') || '-'}`;
     })
     .join('\n\n');
@@ -628,10 +669,10 @@ Materi Sumber Terverifikasi BMP:
 ${sourceBlocks}
 
 Instruksi Tugas:
-1. Lakukan analisis mendalam terhadap cakupan materi BMP di atas.
-2. Susun Bahan Belajar Lengkap (Study Pack) yang kaya penjelasan konseptual, terstruktur per topik, dan dilengkapi glosarium.
-3. Rancang ${questionCount} butir soal latihan awal yang selaras secara pedagogis dengan materi yang disusun.
-4. Pastikan mahasiswa dapat memahami konsep dan menjawab seluruh soal tersebut setelah mempelajari materi ini.
+1. Lakukan inventarisasi menyeluruh terhadap: (a) seluruh paragraf Rangkuman, DAN (b) SETIAP nomor butir soal pada halaman Tes Formatif (beserta opsi A, B, C, D-nya).
+2. Susun Bahan Belajar Lengkap (Study Pack) per Kegiatan Belajar (Topik) yang TIDAK HANYA menyalin halaman Rangkuman, tetapi juga menjabarkan secara lengkap setiap konsep, daftar faktor, pengecualian ("kecuali..."), dan perbandingan istilah yang diujikan di seluruh nomor soal Tes Formatif.
+3. Jangan biarkan ada satu pun nomor soal Tes Formatif yang materinya tidak terbahas di dalam rangkuman topik.
+4. Rancang ${questionCount} butir soal latihan awal yang representatif dan selaras secara pedagogis dengan materi yang disusun.
 
 Hasilkan seluruh materi belajar dan butir soal dalam format JSON sesuai schema.`;
 
@@ -641,7 +682,8 @@ Hasilkan seluruh materi belajar dan butir soal dalam format JSON sesuai schema.`
     systemInstruction,
     responseSchema: STUDY_PACK_SYNTHESIS_JSON_SCHEMA,
     zodSchema: studyPackSynthesisSchema,
-    enableGoogleSearch: true,
+    thinkingLevel: 'low',
+    enableGoogleSearch: false,
   });
 }
 
@@ -723,7 +765,7 @@ export async function enqueueStudyPackSynthesis({
     targetId: moduleId,
     inputChecksum: computeSha256({ sourceDigest, boundedQuestionCount }),
     model,
-    promptVersion: 'studypack-v3',
+    promptVersion: 'studypack-v4',
     schemaVersion: 2,
   });
 

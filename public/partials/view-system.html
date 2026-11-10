@@ -39,7 +39,7 @@
       <div>
         <dt>Gemini API</dt>
         <dd>
-          <span :class="health?.ai?.apiKeyConfigured ? 'state state--ok' : 'state state--review'" x-text="health?.ai?.apiKeyConfigured ? 'Kunci API terpasang' : 'Kunci API belum diatur'"></span>
+          <span :class="health?.ai?.apiKeyConfigured ? 'state state--ok' : 'state state--review'" x-text="health?.ai?.apiKeyConfigured ? (health?.ai?.apiKeyCount > 1 ? `${health?.ai?.apiKeyCount} Kunci API aktif (Pool)` : 'Kunci API terpasang') : 'Kunci API belum diatur'"></span>
           <span class="meta">
             Model <span class="code" x-text="health?.ai?.model || 'belum diatur'"></span>, penalaran
             <span x-text="health?.ai?.thinkingLevel || 'low'"></span>, pencarian web

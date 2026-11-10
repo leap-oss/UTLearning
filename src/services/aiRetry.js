@@ -116,7 +116,7 @@ export function classifyAiError(error) {
       httpStatus: 429,
       errorCode: 'RATE_LIMIT_TEMPORARY',
       userMessage: 'Batas request per menit tercapai sementara (429). Sistem mencoba ulang secara bertahap.',
-      retryAfterMs: parseRetryAfterMs(error),
+      retryAfterMs: parseRetryAfterMs(error) || 10000,
     };
   }
 

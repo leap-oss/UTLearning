@@ -330,7 +330,7 @@ export async function enqueueSourceExtraction({
   }
 
   const config = getEnvConfig();
-  const model = config.geminiModel || 'gemini-2.5-flash';
+  const model = config.geminiModel || 'gemini-3.5-flash';
 
   const inputSignature = preparedFiles.map((f) => ({
     checksum: f.checksum,

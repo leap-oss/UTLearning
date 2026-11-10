@@ -1,3 +1,4 @@
+process.env.NODE_ENV = 'test';
 import test, { after } from 'node:test';
 import assert from 'node:assert/strict';
 import { createApp } from '../src/app.js';
@@ -24,9 +25,26 @@ async function withServer(run) {
   }
 }
 
+function snapshotGeminiEnv() {
+  const snapshot = {};
+  for (const k of Object.keys(process.env)) {
+    if (/gemini/i.test(k)) {
+      snapshot[k] = process.env[k];
+      delete process.env[k];
+    }
+  }
+  return () => {
+    for (const k of Object.keys(process.env)) {
+      if (/gemini/i.test(k)) {
+        delete process.env[k];
+      }
+    }
+    Object.assign(process.env, snapshot);
+  };
+}
+
 test('GET /api/health returns status without leaking secrets', async () => {
-  const prevKey = process.env.GEMINI_API_KEY;
-  const prevModel = process.env.GEMINI_MODEL;
+  const restoreEnv = snapshotGeminiEnv();
 
   process.env.GEMINI_API_KEY = 'AIzaSySecretTestKey123456789';
   process.env.GEMINI_MODEL = 'gemini-2.5-flash';
@@ -44,15 +62,56 @@ test('GET /api/health returns status without leaking secrets', async () => {
       assert.equal(body.database.configured, true);
       assert.equal(body.database.connected, true);
       assert.equal(body.ai.apiKeyConfigured, true);
+      assert.equal(body.ai.apiKeyCount, 1);
       assert.equal(body.ai.model, 'gemini-2.5-flash');
       assert.equal(body.ai.limits.maxConcurrentJobs, 1);
     });
   } finally {
-    if (prevKey === undefined) delete process.env.GEMINI_API_KEY;
-    else process.env.GEMINI_API_KEY = prevKey;
+    restoreEnv();
+  }
+});
 
-    if (prevModel === undefined) delete process.env.GEMINI_MODEL;
-    else process.env.GEMINI_MODEL = prevModel;
+test('Multi-API Key Pool: parses and rotates multiple keys with failover', async () => {
+  const { GeminiApiKeyPool } = await import('../src/services/geminiClient.js');
+  const restoreEnv = snapshotGeminiEnv();
+
+  try {
+    process.env.GEMINI_API_KEY = 'key-alpha, key-beta\nkey-gamma';
+    process.env.GEMINI_API_KEYS = 'key-delta; key-alpha'; // key-alpha is duplicate
+
+    const pool = new GeminiApiKeyPool();
+    const keys = pool.getKeys();
+    assert.equal(keys.length, 4);
+    assert.deepEqual(keys, ['key-alpha', 'key-beta', 'key-gamma', 'key-delta']);
+
+    const first = pool.getActiveKeyInfo();
+    assert.equal(first.key, 'key-alpha');
+    assert.equal(first.index, 0);
+
+    // Simulate rate-limit on key-alpha -> should rotate to key-beta
+    pool.markCooldown('key-alpha', 60000);
+    const second = pool.getActiveKeyInfo();
+    assert.equal(second.key, 'key-beta');
+    assert.equal(second.index, 1);
+
+    // Simulate rate-limit on key-beta -> should rotate to key-gamma
+    pool.markCooldown('key-beta', 60000);
+    const third = pool.getActiveKeyInfo();
+    assert.equal(third.key, 'key-gamma');
+    assert.equal(third.index, 2);
+    // Test Gemini_API-1, Gemini_API-2 numbered format
+    delete process.env.GEMINI_API_KEY;
+    delete process.env.GEMINI_API_KEYS;
+    process.env['Gemini_API-1'] = 'key-dash-1';
+    process.env['Gemini_API-2'] = 'key-dash-2';
+    process.env['GEMINI_API_3'] = 'key-underscore-3';
+
+    const poolNumbered = new GeminiApiKeyPool();
+    const numberedKeys = poolNumbered.getKeys();
+    assert.equal(numberedKeys.length, 3);
+    assert.deepEqual(numberedKeys, ['key-dash-1', 'key-dash-2', 'key-underscore-3']);
+  } finally {
+    restoreEnv();
   }
 });
 
