@@ -1060,6 +1060,17 @@ export async function defaultTwoStageStudyPackSynthesizer({
 
   const allKbTitles = kbStructure.map((kb) => `KB ${kb.kbNumber}: ${kb.title}`).join(', ');
   const batchResults = [];
+  const accumulatedUsage = {
+    promptTokenCount: 0,
+    candidatesTokenCount: 0,
+    thoughtsTokenCount: 0,
+    toolUsePromptTokenCount: 0,
+    cachedContentTokenCount: 0,
+    totalTokenCount: 0,
+  };
+  let hasUsageMetadata = false;
+  let lastModel = null;
+  let anySearchGrounding = false;
 
   for (let bIdx = 0; bIdx < batches.length; bIdx++) {
     const batch = batches[bIdx];
@@ -1116,6 +1127,19 @@ Hasilkan output dalam format JSON sesuai schema.`;
       thinkingLevel: 'low',
       enableGoogleSearch: false,
     });
+
+    if (aiRes?.usageMetadata && typeof aiRes.usageMetadata === 'object') {
+      hasUsageMetadata = true;
+      const u = aiRes.usageMetadata;
+      accumulatedUsage.promptTokenCount += Number(u.promptTokenCount ?? u.inputTokens ?? 0) || 0;
+      accumulatedUsage.candidatesTokenCount += Number(u.candidatesTokenCount ?? u.outputTokens ?? 0) || 0;
+      accumulatedUsage.thoughtsTokenCount += Number(u.thoughtsTokenCount ?? u.thinkingTokens ?? 0) || 0;
+      accumulatedUsage.toolUsePromptTokenCount += Number(u.toolUsePromptTokenCount ?? 0) || 0;
+      accumulatedUsage.cachedContentTokenCount += Number(u.cachedContentTokenCount ?? u.cachedTokens ?? 0) || 0;
+      accumulatedUsage.totalTokenCount += Number(u.totalTokenCount ?? u.totalTokens ?? 0) || 0;
+    }
+    if (aiRes?.model) lastModel = aiRes.model;
+    if (aiRes?.searchGroundingUsed) anySearchGrounding = true;
 
     batchResults.push(aiRes.data);
   }
@@ -1215,7 +1239,12 @@ Hasilkan output dalam format JSON sesuai schema.`;
   };
 
   const validated = validateAndAlignStudyPack(integratedPack, reviewedSources);
-  return { data: validated };
+  return {
+    data: validated,
+    usageMetadata: hasUsageMetadata ? accumulatedUsage : null,
+    model: lastModel,
+    searchGroundingUsed: anySearchGrounding,
+  };
 }
 
 export async function defaultStudyPackSynthesizer(params) {
@@ -1553,21 +1582,43 @@ export async function enqueueAdditionalQuestionSet({
         })
         .returning();
 
-      const qValues = parsed.questions.map((q, idx) => ({
-        questionSetId: createdSet.id,
-        moduleId,
-        questionOrder: idx + 1,
-        topicLabel: q.topicLabel,
-        learningObjective: q.learningObjective || `Menerapkan konsep ${q.topicLabel}`,
-        questionType: q.questionType || 'conceptual_application',
-        prompt: q.prompt,
-        optionsJson: q.options,
-        correctOption: q.correctOption,
-        explanation: q.explanation,
-        sourceRefsJson: q.sourceRefs,
-        difficulty: q.difficulty || 'medium',
-        createdAt: now,
-      }));
+      const packTopics = (latestPack.summaryJson?.topics || [])
+        .map((t) => String(t.topicLabel || t.title || '').trim())
+        .filter(Boolean);
+
+      const qValues = parsed.questions.map((q, idx) => {
+        const rawTopic = String(q.topicLabel || '').trim();
+        const normQ = rawTopic
+          .toLowerCase()
+          .replace(/^(?:kegiatan\s*belajar|kb)\s*\d+\s*[:.\-–—]?\s*/i, '')
+          .trim();
+        const matchedPackTopic =
+          packTopics.find((pt) => pt.toLowerCase() === rawTopic.toLowerCase()) ||
+          packTopics.find((pt) => {
+            const normPt = pt
+              .toLowerCase()
+              .replace(/^(?:kegiatan\s*belajar|kb)\s*\d+\s*[:.\-–—]?\s*/i, '')
+              .trim();
+            return normPt && normQ && (normPt.includes(normQ) || normQ.includes(normPt));
+          }) ||
+          rawTopic;
+
+        return {
+          questionSetId: createdSet.id,
+          moduleId,
+          questionOrder: idx + 1,
+          topicLabel: matchedPackTopic,
+          learningObjective: q.learningObjective || `Menerapkan konsep ${matchedPackTopic}`,
+          questionType: q.questionType || 'conceptual_application',
+          prompt: q.prompt,
+          optionsJson: q.options,
+          correctOption: q.correctOption,
+          explanation: q.explanation,
+          sourceRefsJson: q.sourceRefs,
+          difficulty: q.difficulty || 'medium',
+          createdAt: now,
+        };
+      });
 
       await tx.insert(questions).values(qValues);
 

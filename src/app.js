@@ -126,10 +126,6 @@ export function createApp({
     dbTimingStorage.run(timingStore, () => next());
   });
 
-  app.get('/', (_req, res) => {
-    res.sendFile(path.join(publicDir, 'index.html'));
-  });
-
   app.get('/api/health', async (_req, res) => {
     const config = getEnvConfig();
     const dbHealth = await checkDatabaseHealth();

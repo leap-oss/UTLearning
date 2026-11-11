@@ -2,7 +2,12 @@
 <section x-show="currentView === 'attempt_review' && activeAttemptReview" class="view" data-view="attempt_review">
   <div class="quiz">
     <div>
-      <button type="button" @click="returnFromQuizOrReview()" class="btn btn--ghost btn--sm">Selesai & kembali ke modul</button>
+      <button
+        type="button"
+        @click="returnFromQuizOrReview()"
+        class="btn btn--ghost btn--sm"
+        x-text="activeAttemptReview?.moduleId ? 'Selesai & kembali ke modul' : 'Selesai & kembali ke mata kuliah'"
+      ></button>
     </div>
 
     <header class="stack-lg">

@@ -212,6 +212,24 @@ document.addEventListener('alpine:init', () => {
       return packs[0];
     },
 
+    get visibleModuleQuestionSets() {
+      const allSets = this.activeModule?.questionSets || [];
+      if (allSets.length === 0) return [];
+      const activePackId = this.activeStudyPack?.id || this.activeModule?.studyPacks?.[0]?.id || null;
+      const latestInitial = allSets.find((qs) => qs.setType === 'initial');
+      return allSets.filter((qs) => {
+        if (qs.setType === 'initial') {
+          if (activePackId && qs.studyPackId) {
+            return qs.studyPackId === activePackId;
+          }
+          if (latestInitial) {
+            return qs.id === latestInitial.id;
+          }
+        }
+        return true;
+      });
+    },
+
     get unreviewedSourcesCount() {
       const sources = this.activeModule?.sources || [];
       return sources.filter((s) => s.needsReview).length;
@@ -248,7 +266,7 @@ document.addEventListener('alpine:init', () => {
             )
           : null;
 
-      const denom = Math.max(total, 1);
+      const denom = Math.max(total, expected, 1);
       return {
         total,
         expected,
@@ -589,9 +607,9 @@ document.addEventListener('alpine:init', () => {
             // live refresh sumber selama proses masih jalan
             if (this.activeModule?.id === targetModuleId && this.currentView === 'module') {
               try {
-                const { ok, data: mod } = await this.fetchJson(`/api/modules/${targetModuleId}`, { headers: { Accept: 'application/json' } });
-                if (ok && mod) {
-                  this.activeModule = mod;
+                const { ok, data } = await this.fetchJson(`/api/modules/${targetModuleId}`, { headers: { Accept: 'application/json' } });
+                if (ok && data?.module) {
+                  this.activeModule = data.module;
                 }
               } catch (_) { /* silent */ }
             }
@@ -904,6 +922,7 @@ document.addEventListener('alpine:init', () => {
         if (!res.ok) {
           throw new Error(data.message || 'Gagal memuat pembahasan attempt.');
         }
+        this.activeQuestionSet = null;
         this.activeAttemptReview = data.attempt;
         this.currentView = 'attempt_review';
       } catch (err) {
@@ -1016,27 +1035,40 @@ document.addEventListener('alpine:init', () => {
     async pollAiJobUntilDone(jobId, label, onSuccess, onProgress = null) {
       if (this.pollingTimer) {
         clearTimeout(this.pollingTimer);
+        this.pollingTimer = null;
       }
+
+      const sessionId = (this._pollSessionId || 0) + 1;
+      this._pollSessionId = sessionId;
+      let consecutiveErrors = 0;
 
       this.activeAiJob = {
         jobId,
         label,
-        status: 'queued',
+        status: 'Menunggu antrian…',
         attemptCount: 0,
         maxAttempts: 3,
       };
 
       const pollOnce = async () => {
+        if (this._pollSessionId !== sessionId) return;
+
         try {
           const res = await fetch(`/api/ai/jobs/${jobId}`, {
             headers: { Accept: 'application/json' },
           });
+          if (this._pollSessionId !== sessionId) return;
+
           if (!res.ok) {
             throw new Error(`Gagal memeriksa status job (${res.status})`);
           }
+          consecutiveErrors = 0;
           const job = await res.json();
+          if (this._pollSessionId !== sessionId) return;
+
           const statusLabel = {
             queued: 'Menunggu antrian…',
+            running: 'Sedang diproses…',
             processing: 'Sedang diproses…',
             retrying: 'Mencoba ulang…',
           }[job.status] || job.status;
@@ -1066,8 +1098,16 @@ document.addEventListener('alpine:init', () => {
           if (onProgress) {
             try { await onProgress(); } catch (_) { /* silent */ }
           }
-          this.pollingTimer = setTimeout(pollOnce, 1200);
+          if (this._pollSessionId === sessionId) {
+            this.pollingTimer = setTimeout(pollOnce, 1200);
+          }
         } catch (err) {
+          if (this._pollSessionId !== sessionId) return;
+          consecutiveErrors += 1;
+          if (consecutiveErrors <= 3) {
+            this.pollingTimer = setTimeout(pollOnce, 1500);
+            return;
+          }
           this.activeAiJob = null;
           this.showError(err instanceof Error ? err.message : 'Gagal memantau status job AI.');
         }
@@ -1369,13 +1409,15 @@ document.addEventListener('alpine:init', () => {
       }
     },
 
-    // Proportional widths from real module counts. Returns zeros when nothing is registered.
-    statusSegments(counts) {
+    // Proportional widths from real module counts against target/registered count. Returns zeros when nothing is registered.
+    statusSegments(counts, expectedCount = null) {
       const c = counts || {};
       const total = c.total || 0;
-      const pct = (n) => (total > 0 ? Math.round(((n || 0) / total) * 1000) / 10 : 0);
+      const denom = Math.max(total, Number(expectedCount) || 0);
+      const pct = (n) => (total > 0 && denom > 0 ? Math.round(((n || 0) / denom) * 1000) / 10 : 0);
       return {
         total,
+        expected: denom,
         mastered: c.mastered || 0,
         inProgress: c.in_progress || 0,
         needsReview: c.needs_review || 0,
@@ -1403,7 +1445,9 @@ document.addEventListener('alpine:init', () => {
     get knowledgeGaps() {
       const progModules = this.courseProgress?.modules || [];
       return progModules.filter(
-        (m) => m.status === 'needs_review' || (m.weakTopics && m.weakTopics.length > 0)
+        (m) =>
+          m.status === 'needs_review' ||
+          (m.status !== 'mastered' && m.weakTopics && m.weakTopics.length > 0)
       );
     },
 
@@ -1423,12 +1467,18 @@ document.addEventListener('alpine:init', () => {
         return 'Semua halaman sudah diverifikasi. Susun Study Pack dan kuis awal di tab Rangkuman.';
       }
       if (attemptsCount === 0) {
-        return 'Study Pack siap dibaca. Kerjakan kuis awal di tab Kuis untuk menguji pemahaman.';
+        return 'Study Pack siap dibaca. Kerjakan kuis awal di tab Kuis (minimal skor 80% untuk menguasai modul).';
+      }
+      if (this.activeModule?.status === 'mastered') {
+        if (weakCount > 0) {
+          return `Modul ini sudah dikuasai (skor kuis ≥ 80%). Terdapat ${weakCount} sub-topik yang masih bisa diperkuat lewat latihan tambahan.`;
+        }
+        return 'Modul ini telah dikuasai (skor kuis ≥ 80%). Anda dapat menambah latihan adaptif kapan saja.';
       }
       if (weakCount > 0) {
-        return `Terdapat ${weakCount} topik dengan akurasi di bawah 75%. Tinjau progres atau susun latihan remedial.`;
+        return `Terdapat ${weakCount} topik dengan akurasi di bawah 75%. Susun remedial atau latihan tambahan dan capai skor minimal 80% untuk menguasai modul.`;
       }
-      return 'Materi modul ini sudah dipelajari dengan baik. Anda dapat mengulang kuis atau menambah latihan.';
+      return 'Capai skor minimal 80% pada kuis atau latihan untuk menuntaskan penguasaan modul ini.';
     },
 
     sourceLabel(label) {

@@ -1,6 +1,12 @@
 import { eq, and, desc, inArray, gte, sql } from 'drizzle-orm';
 import { getDb } from '../db/client.js';
-import { aiGenerationJobs, aiUsageEvents } from '../db/schema.js';
+import {
+  aiGenerationJobs,
+  aiUsageEvents,
+  sourceAssets,
+  studyPacks,
+  questionSets,
+} from '../db/schema.js';
 import { getEnvConfig } from '../config/env.js';
 
 export function normalizeUsageMetadata(rawUsage) {
@@ -49,6 +55,44 @@ export async function findJobByIdempotencyKey(idempotencyKey) {
   return rows[0] || null;
 }
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+export async function verifyCachedResultRefs(refs) {
+  if (!refs || typeof refs !== 'object') return false;
+  const db = getDb();
+
+  if (Array.isArray(refs.sourceIds) && refs.sourceIds.length > 0) {
+    const uuidSourceIds = refs.sourceIds.filter((id) => UUID_RE.test(String(id)));
+    if (uuidSourceIds.length > 0) {
+      const found = await db
+        .select({ id: sourceAssets.id })
+        .from(sourceAssets)
+        .where(inArray(sourceAssets.id, uuidSourceIds));
+      if (found.length !== uuidSourceIds.length) return false;
+    }
+  }
+
+  if (refs.studyPackId && UUID_RE.test(String(refs.studyPackId))) {
+    const [pack] = await db
+      .select({ id: studyPacks.id })
+      .from(studyPacks)
+      .where(eq(studyPacks.id, refs.studyPackId))
+      .limit(1);
+    if (!pack) return false;
+  }
+
+  if (refs.questionSetId && UUID_RE.test(String(refs.questionSetId))) {
+    const [qset] = await db
+      .select({ id: questionSets.id })
+      .from(questionSets)
+      .where(eq(questionSets.id, refs.questionSetId))
+      .limit(1);
+    if (!qset) return false;
+  }
+
+  return true;
+}
+
 export async function findLatestSucceededJobByCacheKey(cacheKey) {
   const db = getDb();
   const rows = await db
@@ -56,8 +100,14 @@ export async function findLatestSucceededJobByCacheKey(cacheKey) {
     .from(aiGenerationJobs)
     .where(and(eq(aiGenerationJobs.cacheKey, cacheKey), eq(aiGenerationJobs.status, 'succeeded')))
     .orderBy(desc(aiGenerationJobs.completedAt))
-    .limit(1);
-  return rows[0] || null;
+    .limit(5);
+
+  for (const row of rows) {
+    if (row.resultRefsJson && (await verifyCachedResultRefs(row.resultRefsJson))) {
+      return row;
+    }
+  }
+  return null;
 }
 
 export async function createJobRecord({

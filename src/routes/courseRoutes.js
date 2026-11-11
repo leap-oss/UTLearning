@@ -29,6 +29,32 @@ const upload = multer({
 
 const uuidSchema = z.string().uuid('Format ID tidak valid.');
 
+function handleTocUpload(req, res, next) {
+  const middleware = upload.array('tocImages', 10);
+  middleware(req, res, (err) => {
+    if (!err) return next();
+    if (err instanceof multer.MulterError) {
+      if (err.code === 'LIMIT_FILE_SIZE') {
+        return res.status(400).json({
+          error: 'IMAGE_TOO_LARGE',
+          message: 'Ukuran foto Daftar Isi melebihi batas maksimal (10 MB per file).',
+        });
+      }
+      if (err.code === 'LIMIT_FILE_COUNT') {
+        return res.status(400).json({
+          error: 'TOO_MANY_FILES',
+          message: 'Maksimal 10 foto Daftar Isi dalam satu kali unggah.',
+        });
+      }
+      return res.status(400).json({
+        error: 'UPLOAD_ERROR',
+        message: `Gagal mengunggah file: ${err.message}`,
+      });
+    }
+    return next(err);
+  });
+}
+
 function formatZodError(zodErr) {
   const issues = zodErr.issues || [];
   return issues.map((i) => i.message).join(' ') || 'Input tidak valid.';
@@ -190,7 +216,7 @@ export function createCourseRouter() {
   });
 
   // POST /api/courses/:courseId/auto-map-modules (Auto-Scan BMP Daftar Isi)
-  router.post('/courses/:courseId/auto-map-modules', upload.array('tocImages', 10), async (req, res) => {
+  router.post('/courses/:courseId/auto-map-modules', handleTocUpload, async (req, res) => {
     const parsedId = uuidSchema.safeParse(req.params.courseId);
     if (!parsedId.success) {
       if (req.files) await safeCleanupTempFiles(req.files);

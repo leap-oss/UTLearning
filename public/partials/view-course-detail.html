@@ -64,11 +64,11 @@
           <div
             class="meter"
             role="img"
-            :aria-label="`Progres modul: ${courseOverviewMetrics.mastered} dikuasai, ${courseOverviewMetrics.inProgress} sedang dipelajari, ${courseOverviewMetrics.needsReview} perlu review, ${courseOverviewMetrics.empty} belum dipelajari`"
+            :aria-label="`Progres modul: ${courseOverviewMetrics.mastered} dikuasai, ${courseOverviewMetrics.inProgress} sedang dipelajari, ${courseOverviewMetrics.needsReview} perlu review, ${courseOverviewMetrics.empty} belum dipelajari dari target ${courseOverviewMetrics.expected} modul`"
           >
-            <div class="meter-seg meter-seg--mastered" :style="`width: ${statusSegments(activeCourse?.moduleCounts).masteredPct}%`"></div>
-            <div class="meter-seg meter-seg--progress" :style="`width: ${statusSegments(activeCourse?.moduleCounts).inProgressPct}%`"></div>
-            <div class="meter-seg meter-seg--review" :style="`width: ${statusSegments(activeCourse?.moduleCounts).needsReviewPct}%`"></div>
+            <div class="meter-seg meter-seg--mastered" :style="`width: ${statusSegments(activeCourse?.moduleCounts, activeCourse?.expectedModuleCount).masteredPct}%`"></div>
+            <div class="meter-seg meter-seg--progress" :style="`width: ${statusSegments(activeCourse?.moduleCounts, activeCourse?.expectedModuleCount).inProgressPct}%`"></div>
+            <div class="meter-seg meter-seg--review" :style="`width: ${statusSegments(activeCourse?.moduleCounts, activeCourse?.expectedModuleCount).needsReviewPct}%`"></div>
           </div>
           <div class="legend" x-show="courseOverviewMetrics.total > 0">
             <span class="state state--mastered">Dikuasai <span class="figure" x-text="courseOverviewMetrics.mastered"></span></span>

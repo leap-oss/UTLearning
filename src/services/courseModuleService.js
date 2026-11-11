@@ -1,5 +1,5 @@
 import fs from 'node:fs/promises';
-import { eq, and, asc, desc, ne } from 'drizzle-orm';
+import { eq, and, asc, desc, ne, inArray, gte } from 'drizzle-orm';
 import { z } from 'zod';
 import { getDb } from '../db/client.js';
 import {
@@ -11,6 +11,8 @@ import {
   quizAttempts,
 } from '../db/schema.js';
 import { generateStructuredContent } from './geminiClient.js';
+import { validateAndPrepareUploadedImages } from './extractionService.js';
+import { recordAiUsageEvent } from './aiJobRepository.js';
 
 export const MODULE_STATUSES = ['empty', 'in_progress', 'needs_review', 'mastered'];
 
@@ -108,6 +110,43 @@ export const updateModuleSchema = z
     message: 'Minimal satu field harus diubah.',
   });
 
+async function reconcileModulesMastery(db, moduleList = []) {
+  const candidates = moduleList.filter(
+    (m) => m && m.id && m.status !== 'archived' && m.status !== 'mastered'
+  );
+  if (candidates.length === 0) return;
+
+  const candidateIds = candidates.map((m) => m.id);
+  const passedRows = await db
+    .select({ moduleId: questionSets.moduleId })
+    .from(quizAttempts)
+    .innerJoin(questionSets, eq(quizAttempts.questionSetId, questionSets.id))
+    .where(
+      and(
+        inArray(questionSets.moduleId, candidateIds),
+        eq(quizAttempts.status, 'submitted'),
+        gte(quizAttempts.score, 80)
+      )
+    );
+
+  if (passedRows.length === 0) return;
+
+  const masteredIdSet = new Set(passedRows.map((r) => r.moduleId).filter(Boolean));
+  if (masteredIdSet.size === 0) return;
+
+  const now = new Date();
+  await db
+    .update(modules)
+    .set({ status: 'mastered', updatedAt: now })
+    .where(inArray(modules.id, Array.from(masteredIdSet)));
+
+  for (const mod of moduleList) {
+    if (mod && masteredIdSet.has(mod.id)) {
+      mod.status = 'mastered';
+    }
+  }
+}
+
 function summarizeCourseModules(courseModules) {
   const activeModules = courseModules.filter((m) => m.status !== 'archived');
   const counts = {
@@ -158,6 +197,7 @@ export async function listCourses({ includeArchived = false } = {}) {
   }
 
   const courseMap = new Map();
+  const allModules = [];
   for (const row of rows) {
     const c = row.course;
     let entry = courseMap.get(c.id);
@@ -167,8 +207,11 @@ export async function listCourses({ includeArchived = false } = {}) {
     }
     if (row.module) {
       entry.modules.push(row.module);
+      allModules.push(row.module);
     }
   }
+
+  await reconcileModulesMastery(db, allModules);
 
   return Array.from(courseMap.values()).map(({ course: c, modules: courseModules }) => {
     const { counts, lastActivityAt } = summarizeCourseModules(courseModules);
@@ -240,6 +283,8 @@ export async function getCourseById(courseId, { includeArchivedModules = false }
 
   const course = rows[0].course;
   const visibleModules = rows.map((r) => r.module).filter(Boolean);
+
+  await reconcileModulesMastery(db, visibleModules);
 
   const { counts, lastActivityAt } = summarizeCourseModules(visibleModules);
   const latestAt =
@@ -319,7 +364,9 @@ export async function listModulesByCourse(courseId, { includeArchived = false } 
     .where(eq(modules.courseId, courseId))
     .orderBy(asc(modules.moduleNumber));
 
-  return includeArchived ? rows : rows.filter((m) => m.status !== 'archived');
+  const visible = includeArchived ? rows : rows.filter((m) => m.status !== 'archived');
+  await reconcileModulesMastery(db, visible);
+  return visible;
 }
 
 export async function createModule(courseId, input) {
@@ -417,7 +464,7 @@ export async function getModuleDetail(moduleId) {
       .where(eq(questionSets.moduleId, moduleId))
       .orderBy(desc(questionSets.createdAt)),
     db
-      .select({ questionSetId: quizAttempts.questionSetId })
+      .select({ questionSetId: quizAttempts.questionSetId, score: quizAttempts.score })
       .from(quizAttempts)
       .innerJoin(questionSets, eq(quizAttempts.questionSetId, questionSets.id))
       .where(and(eq(questionSets.moduleId, moduleId), eq(quizAttempts.status, 'submitted'))),
@@ -428,6 +475,17 @@ export async function getModuleDetail(moduleId) {
   }
 
   const { mod, course } = modCourseRows[0];
+  if (
+    mod.status !== 'archived' &&
+    mod.status !== 'mastered' &&
+    submittedAttempts.some((a) => a.score >= 80)
+  ) {
+    await db
+      .update(modules)
+      .set({ status: 'mastered', updatedAt: new Date() })
+      .where(eq(modules.id, moduleId));
+    mod.status = 'mastered';
+  }
   const submittedSetIds = new Set(submittedAttempts.map((a) => a.questionSetId));
 
   // Filter out question sets that have already been submitted so the active quiz tab stays uncluttered
@@ -548,6 +606,8 @@ export async function autoMapModulesFromImages({ courseId, files = [] }) {
     throw err;
   }
 
+  const preparedFiles = await validateAndPrepareUploadedImages(files);
+
   const contents = [
     {
       text:
@@ -569,11 +629,11 @@ export async function autoMapModulesFromImages({ courseId, files = [] }) {
     },
   ];
 
-  for (const file of files) {
-    const buffer = await fs.readFile(file.path);
+  for (const item of preparedFiles) {
+    const buffer = await fs.readFile(item.tempPath);
     contents.push({
       inlineData: {
-        mimeType: file.mimetype || 'image/png',
+        mimeType: item.mimeType,
         data: buffer.toString('base64'),
       },
     });
@@ -590,11 +650,61 @@ export async function autoMapModulesFromImages({ courseId, files = [] }) {
     ),
   });
 
-  const aiResult = await generateStructuredContent({
-    taskType: 'extract_toc_modules',
-    contents,
-    zodSchema: tocSchema,
-  });
+  const tocResponseSchema = {
+    type: 'OBJECT',
+    required: ['modules'],
+    properties: {
+      courseTitle: { type: 'STRING' },
+      modules: {
+        type: 'ARRAY',
+        items: {
+          type: 'OBJECT',
+          required: ['moduleNumber', 'title'],
+          properties: {
+            moduleNumber: { type: 'INTEGER' },
+            title: { type: 'STRING' },
+            kegiatanBelajar: {
+              type: 'ARRAY',
+              items: { type: 'STRING' },
+            },
+          },
+        },
+      },
+    },
+  };
+
+  const startedAtMs = Date.now();
+  let aiResult;
+  try {
+    aiResult = await generateStructuredContent({
+      taskType: 'extract_toc_modules',
+      contents,
+      responseSchema: tocResponseSchema,
+      zodSchema: tocSchema,
+    });
+    await recordAiUsageEvent({
+      courseId,
+      model: aiResult?.model || 'gemini-3.5-flash',
+      taskType: 'extract_toc_modules',
+      status: 'succeeded',
+      httpStatus: 200,
+      durationMs: Date.now() - startedAtMs,
+      usageMetadata: aiResult?.usageMetadata || null,
+    }).catch(() => {});
+  } catch (aiErr) {
+    await recordAiUsageEvent({
+      courseId,
+      model: 'gemini-3.5-flash',
+      taskType: 'extract_toc_modules',
+      status: 'failed',
+      httpStatus: Number(aiErr?.status || aiErr?.statusCode) || 500,
+      errorCode: aiErr?.errorCode || 'AUTO_MAP_AI_ERROR',
+      errorMessage: aiErr?.message || 'Gagal memetakan Daftar Isi',
+      durationMs: Date.now() - startedAtMs,
+      usageMetadata: aiErr?.usageMetadata || null,
+    }).catch(() => {});
+    throw aiErr;
+  }
 
   const extractedModules = aiResult?.data?.modules || [];
   if (extractedModules.length === 0) {

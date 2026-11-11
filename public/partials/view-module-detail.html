@@ -24,7 +24,7 @@
         Rangkuman <span class="tab-count" x-text="activeModule?.studyPacks?.length || 0"></span>
       </button>
       <button type="button" role="tab" class="tab" @click="moduleTab = 'quiz'" :aria-selected="(moduleTab === 'quiz').toString()">
-        Kuis <span class="tab-count" x-text="activeModule?.questionSets?.length || 0"></span>
+        Kuis <span class="tab-count" x-text="visibleModuleQuestionSets?.length || 0"></span>
       </button>
       <button type="button" role="tab" class="tab" @click="moduleTab = 'progress'" :aria-selected="(moduleTab === 'progress').toString()">
         Progres
@@ -507,7 +507,7 @@
       </template>
     </div>
 
-    <template x-if="!activeModule?.questionSets || activeModule.questionSets.length === 0">
+    <template x-if="!visibleModuleQuestionSets || visibleModuleQuestionSets.length === 0">
       <div class="empty">
         <p class="sub-title">Tidak ada kuis aktif</p>
         <p class="lede">
@@ -519,8 +519,8 @@
       </div>
     </template>
 
-    <div class="ledger" x-show="(activeModule?.questionSets?.length || 0) > 0">
-      <template x-for="qs in activeModule?.questionSets || []" :key="qs.id">
+    <div class="ledger" x-show="(visibleModuleQuestionSets?.length || 0) > 0">
+      <template x-for="qs in visibleModuleQuestionSets || []" :key="qs.id">
         <article class="ledger-row ledger-row--link row-anchor" style="grid-template-columns: minmax(0, 1fr) auto">
           <div class="stack-2xs">
             <div class="cluster cluster--tight">

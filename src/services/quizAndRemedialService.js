@@ -180,7 +180,7 @@ export const examSimulationQuestionSchema = z
 export const examSimulationOutputSchema = z.object({
   schemaVersion: z.number().int().optional().default(1),
   title: z.string().trim().min(2),
-  questions: z.array(examSimulationQuestionSchema).min(2).max(30),
+  questions: z.array(examSimulationQuestionSchema).min(2).max(60),
 });
 
 export const EXAM_SIMULATION_JSON_SCHEMA = {
@@ -294,6 +294,166 @@ export async function getQuestionSetWithoutAnswerKey(questionSetId) {
   };
 }
 
+const WEAK_TOPIC_THRESHOLD = 75;
+const MASTERY_SCORE_THRESHOLD = 80;
+
+export function normalizeTopicKey(rawLabel) {
+  return String(rawLabel || '')
+    .trim()
+    .toLowerCase()
+    .replace(/^(?:remedial|topik|materi)\s*[:\-–—]\s*/i, '')
+    .replace(/^(?:kegiatan\s*belajar|kb)\s*\d+\s*[:.\-–—]?\s*/i, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+const TOPIC_STOPWORDS = new Set([
+  'dan', 'atau', 'yang', 'dalam', 'pada', 'untuk', 'dari', 'dengan', 'menurut',
+  'tentang', 'sebagai', 'melalui', 'serta', 'konsep', 'dasar', 'pengertian',
+  'materi', 'topik', 'modul', 'kegiatan', 'belajar',
+]);
+
+function extractTopicTokens(str) {
+  return normalizeTopicKey(str)
+    .replace(/[^a-z0-9\s]/gi, ' ')
+    .split(/\s+/)
+    .filter((w) => w.length >= 3 && !TOPIC_STOPWORDS.has(w));
+}
+
+export function resolveCanonicalTopicLabel(rawLabel, canonicalLabels = []) {
+  const trimmed = String(rawLabel || '').trim() || 'Topik Utama';
+  if (!Array.isArray(canonicalLabels) || canonicalLabels.length === 0) {
+    return trimmed;
+  }
+
+  const exactMatch = canonicalLabels.find(
+    (c) => String(c || '').trim().toLowerCase() === trimmed.toLowerCase()
+  );
+  if (exactMatch) return exactMatch;
+
+  const normTarget = normalizeTopicKey(trimmed);
+  if (!normTarget) return trimmed;
+
+  for (const candidate of canonicalLabels) {
+    const normCand = normalizeTopicKey(candidate);
+    if (
+      normCand &&
+      (normCand === normTarget ||
+        normCand.includes(normTarget) ||
+        normTarget.includes(normCand))
+    ) {
+      return candidate;
+    }
+  }
+
+  // Keyword overlap fallback so topics across v1/v2 study packs and remedial sets map to canonical KB topics
+  const targetTokens = extractTopicTokens(trimmed);
+  if (targetTokens.length > 0) {
+    let bestCandidate = null;
+    let bestScore = 0;
+
+    for (const candidate of canonicalLabels) {
+      const candTokens = extractTopicTokens(candidate);
+      if (candTokens.length === 0) continue;
+
+      let matched = 0;
+      for (const tt of targetTokens) {
+        if (
+          candTokens.some(
+            (ct) => ct === tt || (ct.length >= 4 && tt.length >= 4 && (ct.startsWith(tt) || tt.startsWith(ct)))
+          )
+        ) {
+          matched += 1;
+        }
+      }
+
+      const ratio = matched / targetTokens.length;
+      if ((matched >= 2 || ratio >= 0.5) && ratio > bestScore) {
+        bestScore = ratio;
+        bestCandidate = candidate;
+      }
+    }
+
+    if (bestCandidate) {
+      return bestCandidate;
+    }
+  }
+
+  return trimmed;
+}
+
+export function computeTopicProgressFromAnswers(answerRows = [], canonicalLabels = []) {
+  const topicBuckets = new Map();
+  const discoveredLabels = [...canonicalLabels];
+
+  for (const ans of answerRows) {
+    const resolvedLabel = resolveCanonicalTopicLabel(ans.topicLabel, discoveredLabels);
+    if (!discoveredLabels.includes(resolvedLabel)) {
+      discoveredLabels.push(resolvedLabel);
+    }
+
+    let bucket = topicBuckets.get(resolvedLabel);
+    if (!bucket) {
+      bucket = {
+        topicLabel: resolvedLabel,
+        cumAnswered: 0,
+        cumCorrect: 0,
+        byAttempt: new Map(),
+      };
+      topicBuckets.set(resolvedLabel, bucket);
+    }
+
+    bucket.cumAnswered += 1;
+    if (ans.isCorrect) bucket.cumCorrect += 1;
+
+    const attKey = ans.attemptId || 'default';
+    let attEntry = bucket.byAttempt.get(attKey);
+    if (!attEntry) {
+      attEntry = {
+        attemptId: attKey,
+        submittedAt: ans.submittedAt ? new Date(ans.submittedAt).getTime() : 0,
+        answeredCount: 0,
+        correctCount: 0,
+      };
+      bucket.byAttempt.set(attKey, attEntry);
+    }
+    attEntry.answeredCount += 1;
+    if (ans.isCorrect) attEntry.correctCount += 1;
+  }
+
+  return Array.from(topicBuckets.values()).map((bucket) => {
+    const cumPct =
+      bucket.cumAnswered > 0 ? Math.round((bucket.cumCorrect / bucket.cumAnswered) * 100) : 0;
+
+    const attemptStats = Array.from(bucket.byAttempt.values()).sort(
+      (a, b) => b.submittedAt - a.submittedAt
+    );
+    const latestAtt = attemptStats[0];
+    const latestPct =
+      latestAtt && latestAtt.answeredCount > 0
+        ? Math.round((latestAtt.correctCount / latestAtt.answeredCount) * 100)
+        : cumPct;
+
+    // If a newer attempt (e.g. remedial or practice) improved the student's mastery on this topic,
+    // use the latest attempt's stats so remediated topics are no longer permanently penalized by old mistakes.
+    if (latestAtt && attemptStats.length > 1 && latestPct >= cumPct) {
+      return {
+        topicLabel: bucket.topicLabel,
+        answeredCount: latestAtt.answeredCount,
+        correctCount: latestAtt.correctCount,
+        accuracyPercent: latestPct,
+      };
+    }
+
+    return {
+      topicLabel: bucket.topicLabel,
+      answeredCount: bucket.cumAnswered,
+      correctCount: bucket.cumCorrect,
+      accuracyPercent: cumPct,
+    };
+  });
+}
+
 async function evaluateAndUpdateModuleStatus(tx, moduleId) {
   if (!moduleId) return;
 
@@ -308,63 +468,61 @@ async function evaluateAndUpdateModuleStatus(tx, moduleId) {
   const attempts = await tx
     .select()
     .from(quizAttempts)
-    .where(inArray(quizAttempts.questionSetId, qSetIds))
+    .where(
+      and(
+        inArray(quizAttempts.questionSetId, qSetIds),
+        eq(quizAttempts.status, 'submitted')
+      )
+    )
     .orderBy(desc(quizAttempts.submittedAt));
 
   if (attempts.length === 0) return;
 
   const latestAttempt = attempts[0];
+  const hasMasteryAttempt = attempts.some((a) => a.score >= MASTERY_SCORE_THRESHOLD);
 
-  // Inspect topic-level performance to ensure full learning objective coverage
-  const modQuestions = await tx
-    .select()
-    .from(questions)
-    .where(eq(questions.moduleId, moduleId));
-
-  const modQuestionIds = modQuestions.map((q) => q.id);
-  let answers = [];
-  if (modQuestionIds.length > 0) {
-    answers = await tx
-      .select()
-      .from(attemptAnswers)
-      .where(inArray(attemptAnswers.questionId, modQuestionIds));
-  }
-
-  const topicMap = new Map();
-  for (const ans of answers) {
-    const q = modQuestions.find((q) => q.id === ans.questionId);
-    if (!q) continue;
-    const entry = topicMap.get(q.topicLabel) || { correct: 0, total: 0 };
-    entry.total += 1;
-    if (ans.isCorrect) entry.correct += 1;
-    topicMap.set(q.topicLabel, entry);
-  }
-
-  const weakTopics = Array.from(topicMap.values()).filter(
-    (t) => t.total > 0 && Math.round((t.correct / t.total) * 100) < 80
-  );
-
-  const distinctSetsPassed = new Set(
-    attempts.filter((a) => a.score >= 80).map((a) => a.questionSetId)
-  );
-
-  // Mastery rule:
-  // - Re-open remediation if any topic has unresolved weak performance (<80%)
-  // - Minimum score >= 80% on latest attempt and on >= 2 distinct question sets
-  // - All tested topics must have >= 80% aggregate accuracy
   let nextStatus = 'in_progress';
-  if (latestAttempt.score < 75 || weakTopics.length > 0) {
-    nextStatus = 'needs_review';
-  } else if (distinctSetsPassed.size >= 2 && latestAttempt.score >= 80 && weakTopics.length === 0) {
+  if (hasMasteryAttempt) {
     nextStatus = 'mastered';
-  } else if (attempts.length >= 2 && latestAttempt.score >= 85 && attempts[1].score >= 80 && weakTopics.length === 0) {
-    nextStatus = 'mastered';
+  } else {
+    const answerRows = await tx
+      .select({
+        attemptId: attemptAnswers.attemptId,
+        submittedAt: quizAttempts.submittedAt,
+        topicLabel: questions.topicLabel,
+        isCorrect: attemptAnswers.isCorrect,
+      })
+      .from(attemptAnswers)
+      .innerJoin(quizAttempts, eq(attemptAnswers.attemptId, quizAttempts.id))
+      .innerJoin(questions, eq(attemptAnswers.questionId, questions.id))
+      .where(
+        and(
+          inArray(quizAttempts.questionSetId, qSetIds),
+          eq(quizAttempts.status, 'submitted')
+        )
+      );
+
+    const topicProgress = computeTopicProgressFromAnswers(answerRows);
+    const weakTopics = topicProgress.filter((t) => t.accuracyPercent < WEAK_TOPIC_THRESHOLD);
+
+    if (latestAttempt.score < MASTERY_SCORE_THRESHOLD || weakTopics.length > 0) {
+      nextStatus = 'needs_review';
+    }
   }
 
-  await tx
+  const now = new Date();
+  const [updatedMod] = await tx
     .update(modules)
-    .set({ status: nextStatus, updatedAt: new Date() })
-    .where(eq(modules.id, moduleId));
+    .set({ status: nextStatus, updatedAt: now })
+    .where(eq(modules.id, moduleId))
+    .returning();
+
+  if (updatedMod?.courseId) {
+    await tx
+      .update(courses)
+      .set({ updatedAt: now })
+      .where(eq(courses.id, updatedMod.courseId));
+  }
 }
 
 /**
@@ -772,17 +930,30 @@ export async function enqueueRemedialGeneration({
         .limit(1);
 
       if (latestPack?.summaryJson?.topics) {
-        const wrongTopicLabels = new Set(
-          wrongQuestions.map((w) => w.topicLabel.toLowerCase())
+        const wrongCanonicalSet = new Set(
+          wrongQuestions.map((w) => normalizeTopicKey(w.topicLabel))
         );
-        relevantTopicsContext = latestPack.summaryJson.topics.filter((t) =>
-          wrongTopicLabels.has(String(t.topicLabel || '').toLowerCase())
-        );
+        relevantTopicsContext = latestPack.summaryJson.topics.filter((t) => {
+          const normT = normalizeTopicKey(t.topicLabel || '');
+          return (
+            wrongCanonicalSet.has(normT) ||
+            Array.from(wrongCanonicalSet).some(
+              (wk) => wk && normT && (normT.includes(wk) || wk.includes(normT))
+            )
+          );
+        });
         if (relevantTopicsContext.length === 0) {
           relevantTopicsContext = latestPack.summaryJson.topics.slice(0, 3);
         }
       }
     }
+
+    const canonicalWrongLabels = Array.from(
+      new Set([
+        ...wrongQuestions.map((w) => w.topicLabel).filter(Boolean),
+        ...relevantTopicsContext.map((t) => t.topicLabel).filter(Boolean),
+      ])
+    );
 
     const aiResponse = await generatorFn({
       attemptReview,
@@ -814,21 +985,24 @@ export async function enqueueRemedialGeneration({
         })
         .returning();
 
-      const qValues = parsed.remedialQuestions.map((q, idx) => ({
-        questionSetId: remedialSet.id,
-        moduleId: attemptReview.moduleId,
-        questionOrder: idx + 1,
-        topicLabel: q.topicLabel,
-        learningObjective: q.learningObjective || `Remediasi ${q.topicLabel}`,
-        questionType: q.questionType || 'conceptual_application',
-        prompt: q.prompt,
-        optionsJson: q.options,
-        correctOption: q.correctOption,
-        explanation: q.explanation,
-        sourceRefsJson: q.sourceRefs,
-        difficulty: q.difficulty || 'medium',
-        createdAt: now,
-      }));
+      const qValues = parsed.remedialQuestions.map((q, idx) => {
+        const canonicalTopic = resolveCanonicalTopicLabel(q.topicLabel, canonicalWrongLabels);
+        return {
+          questionSetId: remedialSet.id,
+          moduleId: attemptReview.moduleId,
+          questionOrder: idx + 1,
+          topicLabel: canonicalTopic,
+          learningObjective: q.learningObjective || `Remediasi ${canonicalTopic}`,
+          questionType: q.questionType || 'conceptual_application',
+          prompt: q.prompt,
+          optionsJson: q.options,
+          correctOption: q.correctOption,
+          explanation: q.explanation,
+          sourceRefsJson: q.sourceRefs,
+          difficulty: q.difficulty || 'medium',
+          createdAt: now,
+        };
+      });
 
       await tx.insert(questions).values(qValues);
 
@@ -1099,7 +1273,7 @@ export async function enqueueCourseExamSimulation({
 export async function getModuleProgress(moduleId) {
   const db = getDb();
 
-  const [modSetAttemptRows, answerRows] = await Promise.all([
+  const [modSetAttemptRows, packRows, answerRows] = await Promise.all([
     db
       .select({
         mod: modules,
@@ -1108,17 +1282,41 @@ export async function getModuleProgress(moduleId) {
       })
       .from(modules)
       .leftJoin(questionSets, eq(questionSets.moduleId, modules.id))
-      .leftJoin(quizAttempts, eq(quizAttempts.questionSetId, questionSets.id))
+      .leftJoin(
+        quizAttempts,
+        and(
+          eq(quizAttempts.questionSetId, questionSets.id),
+          eq(quizAttempts.status, 'submitted')
+        )
+      )
       .where(eq(modules.id, moduleId))
       .orderBy(desc(questionSets.createdAt), desc(quizAttempts.submittedAt)),
     db
       .select({
+        summaryJson: studyPacks.summaryJson,
+        version: studyPacks.version,
+      })
+      .from(studyPacks)
+      .where(eq(studyPacks.moduleId, moduleId))
+      .orderBy(desc(studyPacks.version))
+      .limit(1),
+    db
+      .select({
+        attemptId: attemptAnswers.attemptId,
+        submittedAt: quizAttempts.submittedAt,
         topicLabel: questions.topicLabel,
         isCorrect: attemptAnswers.isCorrect,
       })
       .from(attemptAnswers)
+      .innerJoin(quizAttempts, eq(attemptAnswers.attemptId, quizAttempts.id))
       .innerJoin(questions, eq(attemptAnswers.questionId, questions.id))
-      .where(eq(questions.moduleId, moduleId)),
+      .innerJoin(questionSets, eq(questions.questionSetId, questionSets.id))
+      .where(
+        and(
+          eq(questionSets.moduleId, moduleId),
+          eq(quizAttempts.status, 'submitted')
+        )
+      ),
   ]);
 
   if (modSetAttemptRows.length === 0) return null;
@@ -1134,7 +1332,7 @@ export async function getModuleProgress(moduleId) {
         setType: row.qSet.setType,
       });
     }
-    if (row.attempt && !attemptsMap.has(row.attempt.id)) {
+    if (row.attempt && row.attempt.status === 'submitted' && !attemptsMap.has(row.attempt.id)) {
       attemptsMap.set(row.attempt.id, row.attempt);
     }
   }
@@ -1143,23 +1341,22 @@ export async function getModuleProgress(moduleId) {
     (a, b) => new Date(b.submittedAt || 0).getTime() - new Date(a.submittedAt || 0).getTime()
   );
 
-  const topicMap = new Map();
-  for (const ans of answerRows) {
-    const entry = topicMap.get(ans.topicLabel) || {
-      topicLabel: ans.topicLabel,
-      answeredCount: 0,
-      correctCount: 0,
-    };
-    entry.answeredCount += 1;
-    if (ans.isCorrect) entry.correctCount += 1;
-    topicMap.set(ans.topicLabel, entry);
+  const hasMasteryAttempt = attempts.some((a) => a.score >= MASTERY_SCORE_THRESHOLD);
+  if (mod.status !== 'archived' && hasMasteryAttempt && mod.status !== 'mastered') {
+    await db
+      .update(modules)
+      .set({ status: 'mastered', updatedAt: new Date() })
+      .where(eq(modules.id, mod.id));
+    mod.status = 'mastered';
   }
 
-  const topicProgress = Array.from(topicMap.values()).map((t) => ({
-    ...t,
-    accuracyPercent:
-      t.answeredCount > 0 ? Math.round((t.correctCount / t.answeredCount) * 100) : 0,
-  }));
+  const canonicalTopics = (packRows[0]?.summaryJson?.topics || [])
+    .map((t) => t.topicLabel || t.title)
+    .filter(Boolean);
+
+  const topicProgress = computeTopicProgressFromAnswers(answerRows, canonicalTopics);
+  const bestScore =
+    attempts.length > 0 ? Math.max(...attempts.map((a) => a.score)) : null;
 
   return {
     moduleId: mod.id,
@@ -1172,13 +1369,14 @@ export async function getModuleProgress(moduleId) {
         ? Math.round(attempts.reduce((sum, a) => sum + a.score, 0) / attempts.length)
         : null,
     latestScore: attempts[0]?.score ?? null,
+    bestScore,
     attempts: attempts.map((a) => ({
       ...a,
       questionSetTitle: qSetTitleMap.get(a.questionSetId)?.title || 'Kuis',
       setType: qSetTitleMap.get(a.questionSetId)?.setType || 'initial',
     })),
     topicProgress,
-    weakTopics: topicProgress.filter((t) => t.accuracyPercent < 75),
+    weakTopics: topicProgress.filter((t) => t.accuracyPercent < WEAK_TOPIC_THRESHOLD),
   };
 }
 
@@ -1216,7 +1414,13 @@ export async function getCourseProgress(courseId) {
         attempt: quizAttempts,
       })
       .from(questionSets)
-      .leftJoin(quizAttempts, eq(quizAttempts.questionSetId, questionSets.id))
+      .leftJoin(
+        quizAttempts,
+        and(
+          eq(quizAttempts.questionSetId, questionSets.id),
+          eq(quizAttempts.status, 'submitted')
+        )
+      )
       .where(qSetCondition)
       .orderBy(desc(questionSets.createdAt), desc(quizAttempts.submittedAt)),
     modIds.length > 0
@@ -1225,6 +1429,7 @@ export async function getCourseProgress(courseId) {
             id: studyPacks.id,
             moduleId: studyPacks.moduleId,
             version: studyPacks.version,
+            summaryJson: studyPacks.summaryJson,
           })
           .from(studyPacks)
           .where(inArray(studyPacks.moduleId, modIds))
@@ -1233,13 +1438,22 @@ export async function getCourseProgress(courseId) {
     modIds.length > 0
       ? db
           .select({
-            moduleId: questions.moduleId,
+            moduleId: questionSets.moduleId,
+            attemptId: attemptAnswers.attemptId,
+            submittedAt: quizAttempts.submittedAt,
             topicLabel: questions.topicLabel,
             isCorrect: attemptAnswers.isCorrect,
           })
           .from(attemptAnswers)
+          .innerJoin(quizAttempts, eq(attemptAnswers.attemptId, quizAttempts.id))
           .innerJoin(questions, eq(attemptAnswers.questionId, questions.id))
-          .where(inArray(questions.moduleId, modIds))
+          .innerJoin(questionSets, eq(questions.questionSetId, questionSets.id))
+          .where(
+            and(
+              inArray(questionSets.moduleId, modIds),
+              eq(quizAttempts.status, 'submitted')
+            )
+          )
       : Promise.resolve([]),
   ]);
 
@@ -1257,7 +1471,7 @@ export async function getCourseProgress(courseId) {
     if (!qSetsById.has(qs.id)) {
       qSetsById.set(qs.id, qs);
     }
-    if (row.attempt) {
+    if (row.attempt && row.attempt.status === 'submitted') {
       let list = attemptsBySetId.get(qs.id);
       if (!list) {
         list = [];
@@ -1280,6 +1494,7 @@ export async function getCourseProgress(courseId) {
     list.push(ans);
   }
 
+  const modsToMarkMastered = [];
   const moduleBreakdown = courseModules.map((mod) => {
     const modQSets = [];
     for (const qs of qSetsById.values()) {
@@ -1303,25 +1518,23 @@ export async function getCourseProgress(courseId) {
       (a, b) => new Date(b.submittedAt || 0).getTime() - new Date(a.submittedAt || 0).getTime()
     );
 
-    const topicMap = new Map();
-    for (const ans of answersByMod.get(mod.id) || []) {
-      const entry = topicMap.get(ans.topicLabel) || {
-        topicLabel: ans.topicLabel,
-        answeredCount: 0,
-        correctCount: 0,
-      };
-      entry.answeredCount += 1;
-      if (ans.isCorrect) entry.correctCount += 1;
-      topicMap.set(ans.topicLabel, entry);
+    const hasMasteryAttempt = modAttempts.some((a) => a.score >= MASTERY_SCORE_THRESHOLD);
+    if (mod.status !== 'archived' && hasMasteryAttempt && mod.status !== 'mastered') {
+      mod.status = 'mastered';
+      modsToMarkMastered.push(mod.id);
     }
 
-    const topicProgress = Array.from(topicMap.values()).map((t) => ({
-      ...t,
-      accuracyPercent:
-        t.answeredCount > 0 ? Math.round((t.correctCount / t.answeredCount) * 100) : 0,
-    }));
-
     const latestPack = latestPackByMod.get(mod.id);
+    const canonicalTopics = (latestPack?.summaryJson?.topics || [])
+      .map((t) => t.topicLabel || t.title)
+      .filter(Boolean);
+
+    const topicProgress = computeTopicProgressFromAnswers(
+      answersByMod.get(mod.id) || [],
+      canonicalTopics
+    );
+    const bestScore =
+      modAttempts.length > 0 ? Math.max(...modAttempts.map((a) => a.score)) : null;
 
     return {
       moduleId: mod.id,
@@ -1334,17 +1547,25 @@ export async function getCourseProgress(courseId) {
           ? Math.round(modAttempts.reduce((sum, a) => sum + a.score, 0) / modAttempts.length)
           : null,
       latestScore: modAttempts[0]?.score ?? null,
+      bestScore,
       attempts: modAttempts.map((a) => ({
         ...a,
         questionSetTitle: qSetTitleMap.get(a.questionSetId)?.title || 'Kuis',
         setType: qSetTitleMap.get(a.questionSetId)?.setType || 'initial',
       })),
       topicProgress,
-      weakTopics: topicProgress.filter((t) => t.accuracyPercent < 75),
+      weakTopics: topicProgress.filter((t) => t.accuracyPercent < WEAK_TOPIC_THRESHOLD),
       hasVerifiedStudyPack: Boolean(latestPack),
       latestStudyPackVersion: latestPack?.version ?? null,
     };
   });
+
+  if (modsToMarkMastered.length > 0) {
+    await db
+      .update(modules)
+      .set({ status: 'mastered', updatedAt: new Date() })
+      .where(inArray(modules.id, modsToMarkMastered));
+  }
 
   const examSimulations = [];
   for (const qs of qSetsById.values()) {

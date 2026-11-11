@@ -1,9 +1,9 @@
 import fs from 'node:fs/promises';
 import crypto from 'node:crypto';
-import { eq, asc, inArray } from 'drizzle-orm';
+import { eq, and, asc, inArray } from 'drizzle-orm';
 import { z } from 'zod';
 import { getDb } from '../db/client.js';
-import { modules, sourceAssets } from '../db/schema.js';
+import { modules, sourceAssets, studyPacks, questionSets, quizAttempts } from '../db/schema.js';
 import { getEnvConfig } from '../config/env.js';
 import { buildCacheKey, computeSha256 } from './aiRetry.js';
 import { generateStructuredContent } from './geminiClient.js';
@@ -623,5 +623,50 @@ export async function deleteSourceAsset(sourceId) {
     .delete(sourceAssets)
     .where(eq(sourceAssets.id, sourceId))
     .returning();
-  return deleted || null;
+
+  if (!deleted) {
+    return null;
+  }
+
+  const [mod] = await db
+    .select()
+    .from(modules)
+    .where(eq(modules.id, deleted.moduleId))
+    .limit(1);
+
+  if (mod && mod.status !== 'archived' && mod.status !== 'mastered') {
+    const [remainingSources, existingPacks, submittedAttempts] = await Promise.all([
+      db.select().from(sourceAssets).where(eq(sourceAssets.moduleId, deleted.moduleId)),
+      db.select({ id: studyPacks.id }).from(studyPacks).where(eq(studyPacks.moduleId, deleted.moduleId)).limit(1),
+      db
+        .select({ score: quizAttempts.score })
+        .from(quizAttempts)
+        .innerJoin(questionSets, eq(quizAttempts.questionSetId, questionSets.id))
+        .where(and(eq(questionSets.moduleId, deleted.moduleId), eq(quizAttempts.status, 'submitted'))),
+    ]);
+
+    const anySourceNeedsReview = remainingSources.some((s) => s.needsReview);
+    const hasHighQuizScore = submittedAttempts.some((a) => a.score >= 80);
+    const hasLowQuizScore = submittedAttempts.length > 0 && !hasHighQuizScore;
+
+    let nextStatus = mod.status;
+    if (hasHighQuizScore) {
+      nextStatus = 'mastered';
+    } else if (anySourceNeedsReview || hasLowQuizScore) {
+      nextStatus = 'needs_review';
+    } else if (remainingSources.length > 0 || existingPacks.length > 0) {
+      nextStatus = 'in_progress';
+    } else {
+      nextStatus = 'empty';
+    }
+
+    if (nextStatus !== mod.status) {
+      await db
+        .update(modules)
+        .set({ status: nextStatus, updatedAt: new Date() })
+        .where(eq(modules.id, deleted.moduleId));
+    }
+  }
+
+  return deleted;
 }

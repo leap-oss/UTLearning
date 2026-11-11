@@ -91,10 +91,10 @@
 
         <!-- progress meter -->
         <div class="course-card__meter">
-          <div class="meter" role="img" :aria-label="`${statusSegments(course.moduleCounts).mastered} dikuasai, ${statusSegments(course.moduleCounts).inProgress} sedang dipelajari, ${statusSegments(course.moduleCounts).needsReview} perlu review dari ${statusSegments(course.moduleCounts).total} modul`">
-            <div class="meter-seg meter-seg--mastered" :style="`width: ${statusSegments(course.moduleCounts).masteredPct}%`"></div>
-            <div class="meter-seg meter-seg--progress" :style="`width: ${statusSegments(course.moduleCounts).inProgressPct}%`"></div>
-            <div class="meter-seg meter-seg--review" :style="`width: ${statusSegments(course.moduleCounts).needsReviewPct}%`"></div>
+          <div class="meter" role="img" :aria-label="`${statusSegments(course.moduleCounts, course.expectedModuleCount).mastered} dikuasai, ${statusSegments(course.moduleCounts, course.expectedModuleCount).inProgress} sedang dipelajari, ${statusSegments(course.moduleCounts, course.expectedModuleCount).needsReview} perlu review dari ${statusSegments(course.moduleCounts, course.expectedModuleCount).expected} modul`">
+            <div class="meter-seg meter-seg--mastered" :style="`width: ${statusSegments(course.moduleCounts, course.expectedModuleCount).masteredPct}%`"></div>
+            <div class="meter-seg meter-seg--progress" :style="`width: ${statusSegments(course.moduleCounts, course.expectedModuleCount).inProgressPct}%`"></div>
+            <div class="meter-seg meter-seg--review" :style="`width: ${statusSegments(course.moduleCounts, course.expectedModuleCount).needsReviewPct}%`"></div>
           </div>
           <p class="meta">
             <strong class="figure" x-text="course.moduleCounts?.total ?? 0"></strong>

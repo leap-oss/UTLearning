@@ -6,6 +6,8 @@ import { createApp } from '../src/app.js';
 import { getDb, closeDb } from '../src/db/client.js';
 import { courses, aiGenerationJobs, aiUsageEvents } from '../src/db/schema.js';
 import { AiJobQueue } from '../src/services/aiQueue.js';
+import { examSimulationOutputSchema } from '../src/services/quizAndRemedialService.js';
+import { verifyCachedResultRefs } from '../src/services/aiJobRepository.js';
 
 const testCourseIds = [];
 const testJobIds = [];
@@ -452,16 +454,75 @@ test('Milestones 3 to 7: Complete learning loop (upload -> extract -> review -> 
     assert.equal(simAttempt.moduleBreakdown[1].score, 0);
 
     // Check module & course progress endpoints
+    // Save a draft on remedialSet first and verify drafts do NOT pollute attemptCount or averageScore
+    const draftRes = await fetch(`${baseUrl}/api/question-sets/${remedialSet.id}/draft`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        selections: { [remedialSet.questions[0].id]: 'A' },
+      }),
+    });
+    assert.equal(draftRes.status, 200);
+
     const progMod1Res = await fetch(`${baseUrl}/api/modules/${mod1.id}/progress`);
     assert.equal(progMod1Res.status, 200);
     const { progress: progMod1 } = await progMod1Res.json();
-    assert.equal(progMod1.attemptCount, 1);
+    assert.equal(progMod1.attemptCount, 1, 'In-progress draft must not be counted as a submitted attempt');
+    assert.equal(progMod1.averageScore, 50);
+    assert.equal(progMod1.status, 'needs_review');
+    assert.equal(progMod1.weakTopics.length, 1);
+
+    // Submit the remedial quiz with 100% (>= 80%) and verify module becomes mastered and weak topic is resolved
+    const remSubmitRes = await fetch(`${baseUrl}/api/question-sets/${remedialSet.id}/attempts`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        answers: [{ questionId: remedialSet.questions[0].id, selectedOption: 'A' }],
+      }),
+    });
+    assert.equal(remSubmitRes.status, 201);
+
+    const progMod1AfterRemRes = await fetch(`${baseUrl}/api/modules/${mod1.id}/progress`);
+    const { progress: progMod1AfterRem } = await progMod1AfterRemRes.json();
+    assert.equal(progMod1AfterRem.status, 'mastered', 'Module must become mastered once any quiz attempt reaches >= 80%');
+    assert.equal(progMod1AfterRem.attemptCount, 2);
+    assert.equal(progMod1AfterRem.bestScore, 100);
+    assert.equal(progMod1AfterRem.weakTopics.length, 0, 'Remediated topic must no longer be marked weak');
 
     const progCourseRes = await fetch(`${baseUrl}/api/courses/${course.id}/progress`);
     assert.equal(progCourseRes.status, 200);
     const { progress: progCourse } = await progCourseRes.json();
     assert.equal(progCourse.modules.length, 2);
+    assert.equal(progCourse.modules[0].status, 'mastered');
     assert.equal(progCourse.examSimulations.length, 1);
+
+    // Verify 45-question Exam Simulation schema validation succeeds
+    const parsed45Sim = examSimulationOutputSchema.parse({
+      schemaVersion: 1,
+      title: 'Simulasi Lengkap UAS 45 Soal',
+      questions: Array.from({ length: 45 }, (_, i) => ({
+        moduleNumber: (i % 9) + 1,
+        topicLabel: `Topik ${(i % 3) + 1}`,
+        prompt: `Pertanyaan simulasi nomor ${i + 1}?`,
+        options: [
+          { key: 'A', text: 'Opsi A' },
+          { key: 'B', text: 'Opsi B' },
+          { key: 'C', text: 'Opsi C' },
+          { key: 'D', text: 'Opsi D' },
+        ],
+        correctOption: 'A',
+        explanation: 'Penjelasan jawaban A.',
+        difficulty: 'medium',
+        sourceRefs: ['Modul 1 Hal. 1'],
+      })),
+    });
+    assert.equal(parsed45Sim.questions.length, 45);
+
+    // Verify verifyCachedResultRefs rejects non-existent UUIDs (dangling cache protection)
+    const danglingValid = await verifyCachedResultRefs({
+      studyPackId: crypto.randomUUID(),
+    });
+    assert.equal(danglingValid, false, 'Must reject cache hit when referenced studyPackId no longer exists in DB');
   } finally {
     await new Promise((resolve) => server.close(resolve));
   }
