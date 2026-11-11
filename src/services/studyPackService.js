@@ -599,44 +599,391 @@ async function getCompactPrerequisiteConcepts(courseId, currentModuleNumber) {
   return concepts;
 }
 
-export async function defaultStudyPackSynthesizer({
-  courseRecord,
-  moduleRecord,
-  reviewedSources,
-  prerequisiteConcepts,
-  questionCount = 5,
-}) {
-  const systemInstruction = `Anda adalah kurator dan arsitek penyusun bahan belajar komprehensif Universitas Terbuka (BMP) yang berfokus pada ketuntasan pemahaman mandiri mahasiswa.
+export const KB_MATERIAL_BATCH_JSON_SCHEMA = {
+  type: 'OBJECT',
+  required: ['topics', 'glossary'],
+  properties: {
+    topics: STUDY_PACK_SYNTHESIS_JSON_SCHEMA.properties.topics,
+    glossary: STUDY_PACK_SYNTHESIS_JSON_SCHEMA.properties.glossary,
+    formulasOrProcedures: STUDY_PACK_SYNTHESIS_JSON_SCHEMA.properties.formulasOrProcedures,
+  },
+};
 
-PRINSIP WAJIB:
-1. JANGAN MERINGKAS TERLALU PENDEK: Mahasiswa belajar mandiri menggunakan bahan ini. Setiap topik WAJIB diuraikan secara mendalam dan jelas (minimal 4-5 paragraf naratif yang komprehensif per topik di "detailedExplanation"), bukan sekadar ringkasan permukaan.
-2. BEDAH TUNTAS & REVERSE-ENGINEERING SELURUH SOAL TES FORMATIF (100% CAKUPAN WAJIB):
-   - Mahasiswa sering kali HANYA mengunggah halaman "Rangkuman" dan "Tes Formatif" (tanpa mengunggah puluhan halaman isi bab).
-   - Oleh karena itu, banyak konsep spesifik yang diujikan di soal "Tes Formatif" TIDAK tertulis di halaman "Rangkuman" singkat.
-   - Anda WAJIB membedah SETIAP butir soal yang ada di seluruh halaman Tes Formatif (misal Soal 1 s/d 10 pada Tes Formatif 1, Soal 1 s/d 10 pada Tes Formatif 2, dst.) dan mengubahnya menjadi materi pembelajaran utuh di dalam "detailedExplanation", "coreConcepts", "comparisons", "commonMisconceptions", dan "glossary"!
-   - DILARANG MELEWATKAN SATU PUN konsep dari nomor soal Tes Formatif yang diunggah.
-   - Untuk soal berbentuk pengecualian ("...kecuali..."), uraikan secara eksplisit seluruh faktor/unsur yang benar DAN jelaskan mengapa opsi pengecoh tersebut dikecualikan (masukkan ke "detailedExplanation" dan "commonMisconceptions").
-   - Untuk soal yang memiliki opsi istilah teknis berbeda pada pilihan A/B/C/D (misal dimensi informasi: Akurasi vs Relevansi vs Tepat Waktu vs Lengkap; atau layanan teknologi: IoT vs SaaS vs PaaS vs Big Data Analytics; atau prinsip keamanan: Confidentiality vs Integrity vs Availability vs Reliability), jelaskan definisi dan pembeda masing-masing istilah tersebut di "detailedExplanation", "comparisons", atau "glossary" sehingga mahasiswa memahami seluruh opsi, bukan sekadar menghafal kunci jawaban.
-3. PEMISAHAN KONTEN OTENTIK BMP VS BANTUAN AI:
-   - "bmpSummary", "detailedExplanation", "coreConcepts", "comparisons", "processesOrStages": Berisi sintesis lengkap dari halaman Rangkuman DAN hasil bedah konsep seluruh butir soal Tes Formatif BMP. Pertahankan istilah asli BMP.
-   - "aiExplanation", "simpleAnalogy", "examples" (dengan isAiGenerated=true): Berisi analogi bahasa manusiawi, perumpamaan sehari-hari, dan contoh penerapan konkret untuk mempermudah pemahaman mahasiswa.
-4. STRUKTUR MATERI PER TOPIK (PISAHKAN PER KEGIATAN BELAJAR):
-   - "topicLabel": Judul Kegiatan Belajar / Topik yang jelas.
-   - "learningObjectives": 3-5 sasaran pembelajaran spesifik yang merangkum Rangkuman & Tes Formatif KB tersebut.
-   - "coreConcepts": Seluruh konsep/definisi kunci dari Rangkuman & seluruh nomor Tes Formatif.
-   - "detailedExplanation": Uraian penjelasan mendalam (4-6 paragraf terstruktur yang mencakup semua konsep di Rangkuman + semua materi yang ditanyakan pada setiap nomor soal Tes Formatif).
-   - "conceptRelationships": Keterhubungan atau ketergantungan antar konsep.
-   - "comparisons": Perbandingan terstruktur (itemA, itemB, distinction) untuk istilah-istilah yang berpotensi tertukar di soal Tes Formatif.
-   - "processesOrStages": Alur langkah, evolusi era, atau tahapan prosedural/manajemen.
-   - "commonMisconceptions": Miskonsepsi umum dan jebakan pengecualian ("kecuali") dari soal Tes Formatif beserta klarifikasi benarnya menurut BMP.
-   - "keyTakeaways": Poin-poin kesimpulan esensial yang lengkap.
-5. KESELARASAN PEDAGOGIS DENGAN SOAL (PEDAGOGICAL ALIGNMENT):
-   - Seluruh ${questionCount} soal pada "initialQuestions" WAJIB bersumber dan DAPAT DIJAWAB dari penjelasan yang telah Anda tulis di "detailedExplanation", "coreConcepts", atau "glossary".
-   - Setiap butir soal harus memiliki "learningObjective", "questionType" ('single_choice', 'conceptual_application', 'scenario_based'), "difficulty", "sourceRefs", dan "explanation".
-6. REFERENSI SUMBER ("sourceRefs"):
-   - Cantumkan referensi halaman BMP yang relevan (contoh: ["Halaman 1", "Halaman 3"]) pada setiap topik, istilah glosarium, dan butir soal.`;
+export const kbMaterialBatchSchema = z.object({
+  topics: z.array(topicLearningMaterialSchema).min(1),
+  glossary: z
+    .array(
+      z.object({
+        term: z.string().trim().min(1),
+        bmpDefinition: z.string().optional().default(''),
+        simpleAnalogy: z.string().trim().optional().default(''),
+        sourceRefs: sourceRefsSchema,
+      })
+    )
+    .optional()
+    .default([]),
+  formulasOrProcedures: z
+    .array(
+      z.object({
+        title: z.string().trim().min(1),
+        content: z.string().trim().min(1),
+        sourceRefs: sourceRefsSchema,
+      })
+    )
+    .optional()
+    .default([]),
+});
 
-  const sourceBlocks = reviewedSources
+export function detectModuleKbStructure(reviewedSources = []) {
+  if (!Array.isArray(reviewedSources) || reviewedSources.length === 0) {
+    return [];
+  }
+
+  const sorted = [...reviewedSources].sort((a, b) => (a.pageOrder || 0) - (b.pageOrder || 0));
+
+  const classifiedPages = sorted.map((s, idx) => {
+    const text = (
+      (s.extractedContentJson?.extractedText || '') +
+      ' ' +
+      (s.extractedContentJson?.pageTitle || '')
+    ).toLowerCase();
+    const tfMatch = text.match(/(?:tes\s*formatif|formatif)\s*([0-9]+)/i);
+    const kbMatch = text.match(/(?:kegiatan\s*belajar|kb)\s*([0-9]+)/i);
+    const tfNum = tfMatch ? Number.parseInt(tfMatch[1], 10) : null;
+    const kbNum = kbMatch ? Number.parseInt(kbMatch[1], 10) : null;
+    const isSummary = s.label === 'rangkuman' || /rangkuman/i.test(text);
+    const isFormatif = s.label === 'tes_formatif' || /tes\s*formatif/i.test(text);
+
+    return {
+      index: idx,
+      source: s,
+      pageOrder: s.pageOrder,
+      label: s.label,
+      tfNum,
+      kbNum,
+      isSummary,
+      isFormatif,
+      textLength: (s.extractedContentJson?.extractedText || '').length,
+    };
+  });
+
+  const detectedKbNums = new Set();
+  classifiedPages.forEach((p) => {
+    if (p.kbNum) detectedKbNums.add(p.kbNum);
+    if (p.tfNum) detectedKbNums.add(p.tfNum);
+  });
+
+  if (detectedKbNums.size <= 1) {
+    const totalChars = classifiedPages.reduce((sum, p) => sum + p.textLength, 0);
+    return [
+      {
+        kbNumber: 1,
+        title: 'Kegiatan Belajar 1',
+        sources: sorted,
+        pageRange: {
+          start: sorted[0]?.pageOrder || 1,
+          end: sorted[sorted.length - 1]?.pageOrder || 1,
+        },
+        hasSummary: classifiedPages.some((p) => p.isSummary),
+        hasFormatif: classifiedPages.some((p) => p.isFormatif),
+        totalChars,
+      },
+    ];
+  }
+
+  let currentKb = 1;
+  const pageToKb = new Array(classifiedPages.length);
+
+  for (let i = 0; i < classifiedPages.length; i++) {
+    const p = classifiedPages[i];
+    if (p.kbNum && p.kbNum > currentKb) {
+      currentKb = p.kbNum;
+    } else if (i > 0) {
+      const prev = classifiedPages[i - 1];
+      const prevWasFormatif = prev.isFormatif || prev.tfNum !== null;
+      if (prevWasFormatif && (p.isSummary || p.label === 'rangkuman' || p.label === 'konsep_inti')) {
+        currentKb += 1;
+      }
+    }
+    if (p.tfNum && p.tfNum > currentKb) {
+      currentKb = p.tfNum;
+    }
+    pageToKb[i] = currentKb;
+  }
+
+  const groupMap = new Map();
+  classifiedPages.forEach((p, idx) => {
+    const kb = pageToKb[idx];
+    if (!groupMap.has(kb)) {
+      groupMap.set(kb, []);
+    }
+    groupMap.get(kb).push(p.source);
+  });
+
+  const sortedKbs = Array.from(groupMap.keys()).sort((a, b) => a - b);
+  return sortedKbs.map((kbNum) => {
+    const kbSources = groupMap.get(kbNum);
+    const totalChars = kbSources.reduce(
+      (sum, s) => sum + (s.extractedContentJson?.extractedText?.length || 0),
+      0
+    );
+    const hasSummary = kbSources.some(
+      (s) => s.label === 'rangkuman' || /rangkuman/i.test(s.extractedContentJson?.extractedText || '')
+    );
+    const hasFormatif = kbSources.some(
+      (s) =>
+        s.label === 'tes_formatif' ||
+        /tes\s*formatif/i.test(s.extractedContentJson?.extractedText || '')
+    );
+    return {
+      kbNumber: kbNum,
+      title: `Kegiatan Belajar ${kbNum}`,
+      sources: kbSources,
+      pageRange: {
+        start: kbSources[0]?.pageOrder || 1,
+        end: kbSources[kbSources.length - 1]?.pageOrder || 1,
+      },
+      hasSummary,
+      hasFormatif,
+      totalChars,
+    };
+  });
+}
+
+export function planKbBatches(kbStructure = [], options = {}) {
+  const maxSafeCharsPerBatch = options.maxSafeCharsPerBatch || 35000;
+  if (!Array.isArray(kbStructure) || kbStructure.length === 0) {
+    return [];
+  }
+
+  const count = kbStructure.length;
+
+  if (count === 1) {
+    return [
+      {
+        batchIndex: 1,
+        totalBatches: 1,
+        kbs: kbStructure,
+        isFinalBatch: true,
+        splitReason: null,
+      },
+    ];
+  }
+
+  if (count === 2) {
+    const totalChars = (kbStructure[0]?.totalChars || 0) + (kbStructure[1]?.totalChars || 0);
+    if (totalChars > maxSafeCharsPerBatch) {
+      return [
+        {
+          batchIndex: 1,
+          totalBatches: 2,
+          kbs: [kbStructure[0]],
+          isFinalBatch: false,
+          splitReason: `Kerapatan materi KB 1 & 2 (${totalChars} karakter) melampaui batas aman (${maxSafeCharsPerBatch}); dipisah agar materi tidak terkompresi.`,
+        },
+        {
+          batchIndex: 2,
+          totalBatches: 2,
+          kbs: [kbStructure[1]],
+          isFinalBatch: true,
+          splitReason: null,
+        },
+      ];
+    }
+    return [
+      {
+        batchIndex: 1,
+        totalBatches: 1,
+        kbs: kbStructure,
+        isFinalBatch: true,
+        splitReason: null,
+      },
+    ];
+  }
+
+  if (count === 3) {
+    const batch1Chars = (kbStructure[0]?.totalChars || 0) + (kbStructure[1]?.totalChars || 0);
+    if (batch1Chars <= maxSafeCharsPerBatch) {
+      return [
+        {
+          batchIndex: 1,
+          totalBatches: 2,
+          kbs: [kbStructure[0], kbStructure[1]],
+          isFinalBatch: false,
+          splitReason: null,
+        },
+        {
+          batchIndex: 2,
+          totalBatches: 2,
+          kbs: [kbStructure[2]],
+          isFinalBatch: true,
+          splitReason: null,
+        },
+      ];
+    }
+    return [
+      {
+        batchIndex: 1,
+        totalBatches: 3,
+        kbs: [kbStructure[0]],
+        isFinalBatch: false,
+        splitReason: `Ukuran KB 1 & 2 (${batch1Chars} karakter) melebihi batas aman; dipartisi terarah.`,
+      },
+      {
+        batchIndex: 2,
+        totalBatches: 3,
+        kbs: [kbStructure[1]],
+        isFinalBatch: false,
+        splitReason: null,
+      },
+      {
+        batchIndex: 3,
+        totalBatches: 3,
+        kbs: [kbStructure[2]],
+        isFinalBatch: true,
+        splitReason: null,
+      },
+    ];
+  }
+
+  const mid = Math.ceil(count / 2);
+  const part1 = kbStructure.slice(0, mid);
+  const part2 = kbStructure.slice(mid);
+  const part1Chars = part1.reduce((sum, kb) => sum + (kb.totalChars || 0), 0);
+  const part2Chars = part2.reduce((sum, kb) => sum + (kb.totalChars || 0), 0);
+
+  if (part1Chars <= maxSafeCharsPerBatch && part2Chars <= maxSafeCharsPerBatch) {
+    return [
+      {
+        batchIndex: 1,
+        totalBatches: 2,
+        kbs: part1,
+        isFinalBatch: false,
+        splitReason: null,
+      },
+      {
+        batchIndex: 2,
+        totalBatches: 2,
+        kbs: part2,
+        isFinalBatch: true,
+        splitReason: null,
+      },
+    ];
+  }
+
+  return kbStructure.map((kb, idx) => ({
+    batchIndex: idx + 1,
+    totalBatches: kbStructure.length,
+    kbs: [kb],
+    isFinalBatch: idx === kbStructure.length - 1,
+    splitReason: `Kerapatan modul (${part1Chars + part2Chars} karakter) melampaui batas aman; dibagi per KB secara independen demi kualitas.`,
+  }));
+}
+
+export function validateStudyPackCoverage(studyPack, reviewedSources = [], kbStructure = []) {
+  const issues = [];
+  const coveredKbs = new Set();
+  const allTopics = studyPack?.topics || [];
+
+  for (const kb of kbStructure) {
+    const kbLabel = `kegiatan belajar ${kb.kbNumber}`;
+    const matched = allTopics.some(
+      (t) =>
+        (t.topicLabel && t.topicLabel.toLowerCase().includes(kbLabel)) ||
+        (t.title && t.title.toLowerCase().includes(kbLabel)) ||
+        (kbStructure.length === 1 && allTopics.length >= 1)
+    );
+    if (matched) {
+      coveredKbs.add(kb.kbNumber);
+    } else {
+      issues.push(`KB ${kb.kbNumber} belum memiliki topik yang sesuai di Study Pack.`);
+    }
+  }
+
+  const referencedPages = new Set();
+  const checkSourceRefs = (refs) => {
+    if (Array.isArray(refs)) {
+      refs.forEach((r) => {
+        const m = String(r).match(/halaman\s*([0-9]+)/i);
+        if (m) referencedPages.add(Number.parseInt(m[1], 10));
+      });
+    }
+  };
+
+  allTopics.forEach((t) => {
+    checkSourceRefs(t.sourceRefs);
+    (t.learningObjectives || []).forEach(checkSourceRefs);
+  });
+  (studyPack?.glossary || []).forEach((g) => checkSourceRefs(g.sourceRefs));
+  (studyPack?.initialQuestions || []).forEach((q) => checkSourceRefs(q.sourceRefs));
+
+  const totalSourcePages = reviewedSources.map((s) => s.pageOrder);
+  const unmappedPages = totalSourcePages.filter((p) => !referencedPages.has(p));
+  if (unmappedPages.length > 0) {
+    issues.push(`Halaman sumber berikut belum dirujuk: ${unmappedPages.join(', ')}`);
+  }
+
+  let totalFormatifQuestions = 0;
+  let coveredFormatifQuestions = 0;
+  const missingQuestionPrompts = [];
+
+  const fullTopicText = allTopics
+    .map(
+      (t) =>
+        `${t.topicLabel || ''} ${t.detailedExplanation || ''} ${t.bmpSummary || ''} ${(t.coreConcepts || []).join(' ')}`
+    )
+    .join(' ')
+    .toLowerCase();
+
+  for (const s of reviewedSources) {
+    const tqs = s.extractedContentJson?.transcribedQuestions || [];
+    for (const tq of tqs) {
+      totalFormatifQuestions++;
+      const words = (tq.prompt || '')
+        .toLowerCase()
+        .replace(/[^a-z0-9\s]/g, ' ')
+        .split(/\s+/)
+        .filter((w) => w.length >= 4);
+
+      const matchedWords = words.filter((w) => fullTopicText.includes(w));
+      const isRepresented = words.length === 0 || matchedWords.length / words.length >= 0.3;
+
+      if (isRepresented) {
+        coveredFormatifQuestions++;
+      } else {
+        missingQuestionPrompts.push(tq.prompt.slice(0, 60));
+      }
+    }
+  }
+
+  const kbCoverageScore = kbStructure.length > 0 ? (coveredKbs.size / kbStructure.length) * 40 : 40;
+  const pageCoverageScore =
+    totalSourcePages.length > 0
+      ? ((totalSourcePages.length - unmappedPages.length) / totalSourcePages.length) * 30
+      : 30;
+  const questionCoverageScore =
+    totalFormatifQuestions > 0
+      ? (coveredFormatifQuestions / totalFormatifQuestions) * 30
+      : 30;
+
+  const coverageScore = Math.round(kbCoverageScore + pageCoverageScore + questionCoverageScore);
+
+  return {
+    coverageScore,
+    totalKbsDetected: kbStructure.length,
+    kbsCovered: coveredKbs.size,
+    totalPages: totalSourcePages.length,
+    pagesMapped: totalSourcePages.length - unmappedPages.length,
+    unmappedPages,
+    totalFormatifQuestions,
+    coveredFormatifQuestions,
+    missingItems: issues,
+    validationPassed: coverageScore >= 80 && (kbStructure.length === 0 || coveredKbs.size === kbStructure.length),
+  };
+}
+
+function formatSourceBlocks(sources = []) {
+  return sources
     .map((s) => {
       const ext = s.extractedContentJson || {};
       const sectionsText = (ext.sections || [])
@@ -656,35 +1003,223 @@ ${sectionsText ? `Bagian Teks:\n${sectionsText}\n` : ''}${questionsText ? `Butir
 Rumus/Tabel: ${(ext.formulasOrTables || []).join('; ') || '-'}`;
     })
     .join('\n\n');
+}
+
+export function buildSystemInstruction({ isFinalBatch, totalQuestionCount, kbTitles }) {
+  const qDirective = isFinalBatch
+    ? `5. KESELARASAN PEDAGOGIS DENGAN SOAL (PEDAGOGICAL ALIGNMENT):
+   - Rancang ${totalQuestionCount} butir soal latihan awal ("initialQuestions") yang representatif dan proporsional mencakup seluruh Kegiatan Belajar modul: ${kbTitles}.
+   - Seluruh soal WAJIB bersumber dan DAPAT DIJAWAB dari penjelasan yang telah ditulis di "detailedExplanation", "coreConcepts", atau "glossary".
+   - Setiap butir soal harus memiliki "topicLabel", "learningObjective", "questionType" ('single_choice', 'conceptual_application', 'scenario_based'), "difficulty", "sourceRefs", dan "explanation".
+   - Distribusikan butir soal secara seimbang menguji penerapan konseptual dan pemahaman mendalam, bukan sekadar hafalan.`
+    : `5. FOKUS KELENGKAPAN MATERI: Hasilkan seluruh topik dan glosarium secara mendalam tanpa melewatkan konsep apapun.`;
+
+  return `Anda adalah kurator dan arsitek penyusun bahan belajar komprehensif Universitas Terbuka (BMP) yang berfokus pada ketuntasan pemahaman mandiri mahasiswa.
+
+PRINSIP WAJIB:
+1. JANGAN MERINGKAS TERLALU PENDEK: Mahasiswa belajar mandiri menggunakan bahan ini. Setiap topik WAJIB diuraikan secara mendalam dan jelas (minimal 4-5 paragraf naratif yang komprehensif per topik di "detailedExplanation"), bukan sekadar ringkasan permukaan.
+2. BEDAH TUNTAS & REVERSE-ENGINEERING SELURUH SOAL TES FORMATIF (100% CAKUPAN WAJIB):
+   - Mahasiswa sering kali HANYA mengunggah halaman "Rangkuman" dan "Tes Formatif" (tanpa mengunggah puluhan halaman isi bab).
+   - Oleh karena itu, banyak konsep spesifik yang diujikan di soal "Tes Formatif" TIDAK tertulis di halaman "Rangkuman" singkat.
+   - Anda WAJIB membedah SETIAP butir soal yang ada di seluruh halaman Tes Formatif pada KB ini dan mengubahnya menjadi materi pembelajaran utuh di dalam "detailedExplanation", "coreConcepts", "comparisons", "commonMisconceptions", dan "glossary"!
+   - DILARANG MELEWATKAN SATU PUN konsep dari nomor soal Tes Formatif yang diunggah.
+   - Untuk soal berbentuk pengecualian ("...kecuali..."), uraikan secara eksplisit seluruh faktor/unsur yang benar DAN jelaskan mengapa opsi pengecoh tersebut dikecualikan (masukkan ke "detailedExplanation" dan "commonMisconceptions").
+   - Untuk soal yang memiliki opsi istilah teknis berbeda pada pilihan A/B/C/D, jelaskan definisi dan pembeda masing-masing istilah tersebut di "detailedExplanation", "comparisons", atau "glossary" sehingga mahasiswa memahami seluruh opsi.
+3. PEMISAHAN KONTEN OTENTIK BMP VS BANTUAN AI:
+   - "bmpSummary", "detailedExplanation", "coreConcepts", "comparisons", "processesOrStages": Berisi sintesis lengkap dari halaman Rangkuman DAN hasil bedah konsep seluruh butir soal Tes Formatif BMP. Pertahankan istilah asli BMP.
+   - "aiExplanation", "simpleAnalogy", "examples" (dengan isAiGenerated=true): Berisi analogi bahasa manusiawi, perumpamaan sehari-hari, dan contoh penerapan konkret untuk mempermudah pemahaman mahasiswa.
+4. STRUKTUR MATERI PER TOPIK (PISAHKAN PER KEGIATAN BELAJAR):
+   - "topicLabel": Judul Kegiatan Belajar yang jelas (misal: "Kegiatan Belajar 1: ...").
+   - "learningObjectives": 3-5 sasaran pembelajaran spesifik yang merangkum Rangkuman & Tes Formatif KB tersebut.
+   - "coreConcepts": Seluruh konsep/definisi kunci dari Rangkuman & seluruh nomor Tes Formatif.
+   - "detailedExplanation": Uraian penjelasan mendalam (4-6 paragraf terstruktur yang mencakup semua konsep di Rangkuman + semua materi yang ditanyakan pada setiap nomor soal Tes Formatif).
+   - "conceptRelationships": Keterhubungan atau ketergantungan antar konsep.
+   - "comparisons": Perbandingan terstruktur (itemA, itemB, distinction) untuk istilah-istilah yang berpotensi tertukar di soal Tes Formatif.
+   - "processesOrStages": Alur langkah, evolusi era, atau tahapan prosedural/manajemen.
+   - "commonMisconceptions": Miskonsepsi umum dan jebakan pengecualian ("kecuali") dari soal Tes Formatif beserta klarifikasi benarnya menurut BMP.
+   - "keyTakeaways": Poin-poin kesimpulan esensial yang lengkap.
+${qDirective}
+6. REFERENSI SUMBER ("sourceRefs"):
+   - Cantumkan referensi halaman BMP yang relevan (contoh: ["Halaman 1", "Halaman 3"]) pada setiap topik, istilah glosarium, dan butir soal.`;
+}
+
+export async function defaultTwoStageStudyPackSynthesizer({
+  courseRecord,
+  moduleRecord,
+  reviewedSources,
+  prerequisiteConcepts = [],
+  questionCount = 10,
+}) {
+  const kbStructure = detectModuleKbStructure(reviewedSources);
+  const batches = planKbBatches(kbStructure);
 
   const prereqText =
     prerequisiteConcepts.length > 0
       ? `\nKonteks Konsep Modul Sebelumnya (hanya sebagai jembatan konteks, BUKAN sumber soal modul ini):\n${JSON.stringify(prerequisiteConcepts)}`
       : '';
 
-  const prompt = `Mata Kuliah: ${courseRecord?.code || ''} - ${courseRecord?.name || ''}
-Modul ${moduleRecord.moduleNumber}: ${moduleRecord.title}${prereqText}
+  const allKbTitles = kbStructure.map((kb) => `KB ${kb.kbNumber}: ${kb.title}`).join(', ');
+  const batchResults = [];
 
-Materi Sumber Terverifikasi BMP:
+  for (let bIdx = 0; bIdx < batches.length; bIdx++) {
+    const batch = batches[bIdx];
+    const batchSources = batch.kbs.flatMap((kb) => kb.sources);
+    const batchKbTitles = batch.kbs.map((kb) => `Kegiatan Belajar ${kb.kbNumber}`).join(' & ');
+    const sourceBlocks = formatSourceBlocks(batchSources);
+
+    const isFinal = batch.isFinalBatch;
+    const systemInstruction = buildSystemInstruction({
+      isFinalBatch: isFinal,
+      totalQuestionCount: questionCount,
+      kbTitles: allKbTitles,
+    });
+
+    let previousContext = '';
+    if (bIdx > 0 && batchResults.length > 0) {
+      const prevTopicsSummary = batchResults
+        .flatMap((r) => r.topics || [])
+        .map((t) => `- ${t.topicLabel}: ${(t.coreConcepts || []).slice(0, 5).join(', ')}`)
+        .join('\n');
+      previousContext = `\nTopik yang sudah berhasil disintesis pada batch sebelumnya:\n${prevTopicsSummary}\n`;
+    }
+
+    const prompt = `Mata Kuliah: ${courseRecord?.code || ''} - ${courseRecord?.name || ''}
+Modul ${moduleRecord.moduleNumber}: ${moduleRecord.title}${prereqText}
+Batch Sintesis: ${bIdx + 1} dari ${batches.length} (Fokus: ${batchKbTitles})
+${previousContext}
+Materi Sumber Terverifikasi BMP untuk Batch Ini:
 ${sourceBlocks}
 
-Instruksi Tugas:
-1. Lakukan inventarisasi menyeluruh terhadap: (a) seluruh paragraf Rangkuman, DAN (b) SETIAP nomor butir soal pada halaman Tes Formatif (beserta opsi A, B, C, D-nya).
-2. Susun Bahan Belajar Lengkap (Study Pack) per Kegiatan Belajar (Topik) yang TIDAK HANYA menyalin halaman Rangkuman, tetapi juga menjabarkan secara lengkap setiap konsep, daftar faktor, pengecualian ("kecuali..."), dan perbandingan istilah yang diujikan di seluruh nomor soal Tes Formatif.
-3. Jangan biarkan ada satu pun nomor soal Tes Formatif yang materinya tidak terbahas di dalam rangkuman topik.
-4. Rancang ${questionCount} butir soal latihan awal yang representatif dan selaras secara pedagogis dengan materi yang disusun.
+Instruksi Khusus Batch ${bIdx + 1}:
+1. Inventarisasi menyeluruh paragraf Rangkuman dan seluruh butir soal Tes Formatif pada sumber batch ini.
+2. Susun topik bahan belajar yang lengkap dan mendalam terpisah per Kegiatan Belajar (${batchKbTitles}).
+3. Dilarang melewatkan satupun konsep, faktor, atau pengecualian ("kecuali...") dari butir soal Tes Formatif.
+${
+  isFinal
+    ? `4. Rancang ${questionCount} butir soal latihan awal ("initialQuestions") yang proporsional menguji seluruh Kegiatan Belajar pada modul ini (${allKbTitles}), selaras dengan materi yang telah disusun.`
+    : '4. Fokus penuh pada penyusunan topik dan glosarium mendalam untuk batch ini.'
+}
 
-Hasilkan seluruh materi belajar dan butir soal dalam format JSON sesuai schema.`;
+Hasilkan output dalam format JSON sesuai schema.`;
 
-  return generateStructuredContent({
-    taskType: 'generate_study_pack',
-    contents: prompt,
-    systemInstruction,
-    responseSchema: STUDY_PACK_SYNTHESIS_JSON_SCHEMA,
-    zodSchema: studyPackSynthesisSchema,
-    thinkingLevel: 'low',
-    enableGoogleSearch: false,
-  });
+    const responseSchema = isFinal
+      ? STUDY_PACK_SYNTHESIS_JSON_SCHEMA
+      : KB_MATERIAL_BATCH_JSON_SCHEMA;
+    const zodSchema = isFinal ? studyPackSynthesisSchema : kbMaterialBatchSchema;
+
+    const aiRes = await generateStructuredContent({
+      taskType: 'generate_study_pack',
+      contents: prompt,
+      systemInstruction,
+      responseSchema,
+      zodSchema,
+      thinkingLevel: 'low',
+      enableGoogleSearch: false,
+    });
+
+    batchResults.push(aiRes.data);
+  }
+
+  // Integrasikan seluruh hasil batch
+  const integratedTopics = [];
+  const integratedGlossaryMap = new Map();
+  const integratedFormulas = [];
+  let finalQuestions = [];
+  let mainTitle = `Bahan Belajar Modul ${moduleRecord.moduleNumber}: ${moduleRecord.title}`;
+  let mainOverview = `Bahan belajar komprehensif Modul ${moduleRecord.moduleNumber} UT.`;
+  let moduleLearningObjectives = [];
+
+  for (let i = 0; i < batchResults.length; i++) {
+    const res = batchResults[i];
+    if (res.title) mainTitle = res.title;
+    if (res.overview) mainOverview = res.overview;
+    if (Array.isArray(res.moduleLearningObjectives) && res.moduleLearningObjectives.length > 0) {
+      moduleLearningObjectives.push(...res.moduleLearningObjectives);
+    }
+    if (Array.isArray(res.topics)) {
+      integratedTopics.push(...res.topics);
+    }
+    if (Array.isArray(res.glossary)) {
+      res.glossary.forEach((g) => {
+        const normKey = (g.term || '').toLowerCase().trim();
+        if (!integratedGlossaryMap.has(normKey)) {
+          integratedGlossaryMap.set(normKey, g);
+        } else {
+          const existing = integratedGlossaryMap.get(normKey);
+          if ((g.bmpDefinition || '').length > (existing.bmpDefinition || '').length) {
+            existing.bmpDefinition = g.bmpDefinition;
+          }
+          if (Array.isArray(g.sourceRefs)) {
+            existing.sourceRefs = Array.from(new Set([...(existing.sourceRefs || []), ...g.sourceRefs]));
+          }
+        }
+      });
+    }
+    if (Array.isArray(res.formulasOrProcedures)) {
+      integratedFormulas.push(...res.formulasOrProcedures);
+    }
+    if (Array.isArray(res.initialQuestions) && res.initialQuestions.length > 0) {
+      finalQuestions = res.initialQuestions;
+    }
+  }
+
+  // Jika initialQuestions belum dibuat (misal dari batch intermediate saja), buat fallback kuis proporsional
+  if (finalQuestions.length === 0) {
+    integratedTopics.forEach((t, tIdx) => {
+      finalQuestions.push({
+        topicLabel: t.topicLabel || `Kegiatan Belajar ${tIdx + 1}`,
+        learningObjective: (t.learningObjectives && t.learningObjectives[0]) || `Memahami ${t.topicLabel}`,
+        questionType: 'conceptual_application',
+        prompt: `Berdasarkan materi ${t.topicLabel}, manakah pernyataan yang paling tepat mengenai konsep utama yang diuraikan?`,
+        options: [
+          { key: 'A', text: (t.coreConcepts && t.coreConcepts[0]) || 'Konsep inti sesuai BMP' },
+          { key: 'B', text: 'Konsep yang bertentangan dengan materi modul' },
+          { key: 'C', text: 'Pernyataan umum yang tidak relevan' },
+          { key: 'D', text: 'Semua jawaban salah' },
+        ],
+        correctOption: 'A',
+        explanation: `Pilihan A tepat karena merupakan konsep inti yang dibahas pada ${t.topicLabel}.`,
+        difficulty: 'medium',
+        sourceRefs: t.sourceRefs || ['Halaman 1'],
+      });
+    });
+  }
+
+  const coverageReport = validateStudyPackCoverage(
+    { topics: integratedTopics, glossary: Array.from(integratedGlossaryMap.values()), initialQuestions: finalQuestions },
+    reviewedSources,
+    kbStructure
+  );
+
+  const coverageNotes = [
+    `Deteksi Struktur: ${coverageReport.totalKbsDetected} Kegiatan Belajar terpetakan secara otomatis.`,
+    `Kelengkapan Halaman: ${coverageReport.pagesMapped}/${coverageReport.totalPages} halaman sumber BMP terverifikasi.`,
+    `Skor Cakupan Materi: ${coverageReport.coverageScore}% (${coverageReport.coveredFormatifQuestions}/${coverageReport.totalFormatifQuestions} butir konsep Tes Formatif terakomodasi).`,
+  ];
+
+  if (coverageReport.missingItems.length > 0) {
+    coverageNotes.push(...coverageReport.missingItems);
+  }
+
+  const integratedPack = {
+    schemaVersion: 2,
+    title: mainTitle,
+    overview: mainOverview,
+    moduleLearningObjectives: Array.from(new Set(moduleLearningObjectives)),
+    topics: integratedTopics,
+    glossary: Array.from(integratedGlossaryMap.values()),
+    formulasOrProcedures: integratedFormulas,
+    coverageNotes,
+    coverageReport,
+    initialQuestions: finalQuestions,
+  };
+
+  const validated = validateAndAlignStudyPack(integratedPack, reviewedSources);
+  return { data: validated };
+}
+
+export async function defaultStudyPackSynthesizer(params) {
+  return defaultTwoStageStudyPackSynthesizer(params);
 }
 
 export async function enqueueStudyPackSynthesis({
@@ -818,6 +1353,7 @@ export async function enqueueStudyPackSynthesis({
             glossary: validated.glossary || [],
             formulasOrProcedures: validated.formulasOrProcedures || [],
             coverageNotes: validated.coverageNotes || [],
+            coverageReport: validated.coverageReport || null,
           },
           sourceRefsJson: sourceRefsList,
           schemaVersion: 2,

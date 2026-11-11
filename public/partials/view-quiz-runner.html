@@ -120,9 +120,6 @@
                 <span class="tag" x-text="q.questionType.replace('_', ' ')"></span>
               </template>
             </div>
-            <template x-if="q.learningObjective">
-              <p class="meta" style="font-size: var(--text-xs)" x-text="`Sasaran: ${q.learningObjective}`"></p>
-            </template>
             <p class="question-prompt" :id="`q-prompt-${q.id}`" x-text="q.prompt"></p>
             <fieldset class="options" :aria-labelledby="`q-prompt-${q.id}`">
               <template x-for="opt in q.options || []" :key="opt.key">
