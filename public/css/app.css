@@ -1773,3 +1773,116 @@ label.checklist-item { cursor: pointer; }
   }
 }
 
+/* =========================================================
+   15. MATH & EQUATION RENDERING (KaTeX + Equation Toolbar)
+   ========================================================= */
+.katex-display {
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding: var(--space-xs) 0;
+  margin: var(--space-xs) 0 !important;
+}
+
+.katex {
+  font-size: 1.04em !important;
+}
+
+.math-prose {
+  white-space: pre-line;
+  overflow-wrap: break-word;
+}
+
+.source-math-text {
+  font-family: var(--font-body);
+  font-size: var(--text-md);
+  line-height: 1.75;
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+  color: var(--color-ink);
+}
+
+.math-toolbar {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  padding: var(--space-sm);
+  border: var(--rule-hair) solid var(--color-rule-2);
+  border-radius: var(--radius-sm);
+  background: var(--color-paper-2);
+}
+
+.math-toolbar-group {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.math-toolbar-label {
+  font-size: var(--text-xs);
+  font-weight: 500;
+  color: var(--color-muted);
+  min-width: 6.5rem;
+}
+
+.math-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 28px;
+  padding: 0.15rem 0.5rem;
+  border: var(--rule-hair) solid var(--color-rule-2);
+  border-radius: var(--radius-sm);
+  background: var(--color-paper-3);
+  color: var(--color-ink);
+  font-size: var(--text-xs);
+  line-height: 1.2;
+  cursor: pointer;
+  transition: background-color var(--dur-short) var(--ease-out), border-color var(--dur-short) var(--ease-out);
+}
+
+.math-btn:hover {
+  background: var(--color-accent-soft);
+  border-color: var(--color-accent);
+}
+
+.math-preview-box {
+  padding: var(--space-md);
+  border: 1px dashed var(--color-rule-2);
+  border-radius: var(--radius-sm);
+  background: var(--color-paper-2);
+  font-size: var(--text-md);
+  line-height: 1.75;
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+  max-height: 20rem;
+  overflow-y: auto;
+}
+
+.formula-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(18rem, 1fr));
+  gap: var(--space-sm);
+}
+
+.formula-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  padding: var(--space-md);
+  border: var(--rule-hair) solid var(--color-rule-2);
+  border-left: 3px solid var(--color-accent);
+  border-radius: var(--radius-sm);
+  background: var(--color-paper-2);
+}
+
+.formula-card__body {
+  padding: var(--space-xs) var(--space-sm);
+  border-radius: var(--radius-sm);
+  background: var(--color-paper-3);
+  font-size: var(--text-md);
+  line-height: 1.65;
+  overflow-x: auto;
+}
+
+

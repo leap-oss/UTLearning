@@ -267,17 +267,22 @@ test('Milestones 3 to 7: Complete learning loop (upload -> extract -> review -> 
     const prematureBody = await prematurePackRes.json();
     assert.equal(prematureBody.error, 'SOURCES_NEED_REVIEW');
 
-    // Review and approve the extracted source
+    // Review and approve the extracted source (including math formulasOrTables)
     const sourceId1 = mod1AfterExt.sources[0].id;
     const reviewRes = await fetch(`${baseUrl}/api/sources/${sourceId1}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        extractedText: 'Teks BMP Modul 1 Terverifikasi: Kernel dan PCB.',
+        extractedText: 'Teks BMP Modul 1 Terverifikasi: Kernel dan PCB serta rumus $(A \\cup B)^c = A^c \\cap B^c$.',
+        formulasOrTables: ['Hukum De Morgan: $(A \\cup B)^c = A^c \\cap B^c$'],
         needsReview: false,
       }),
     });
     assert.equal(reviewRes.status, 200);
+    const { source: reviewedSource1 } = await reviewRes.json();
+    assert.deepEqual(reviewedSource1.extractedContentJson.formulasOrTables, [
+      'Hukum De Morgan: $(A \\cup B)^c = A^c \\cap B^c$',
+    ]);
 
     // 4. Milestone 4: Generate Study Pack v1 + Initial Question Set in 1 batch call
     const sp1Res = await fetch(`${baseUrl}/api/modules/${mod1.id}/study-packs`, {

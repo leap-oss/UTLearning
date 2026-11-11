@@ -123,6 +123,10 @@ test('GET / serves index.html with Alpine.js and Tailwind CSS', async () => {
     assert.match(html, /UT AI Learning Companion/);
     assert.match(html, /alpinejs/);
     assert.match(html, /tailwind\.css/);
+    assert.match(html, /katex\.min\.css/);
+    assert.match(html, /katex\.min\.js/);
+    assert.match(html, /math-toolbar/);
+    assert.match(html, /formulas-procedures/);
   });
 });
 
@@ -132,5 +136,9 @@ test('GET /js/app.js serves Alpine shell script', async () => {
     assert.equal(res.status, 200);
     const js = await res.text();
     assert.match(js, /Alpine\.data\('appShell'/);
+    assert.match(js, /renderMath\(/);
+    assert.match(js, /renderFormula\(/);
+    assert.match(js, /mathToolbarGroups/);
+    assert.match(js, /insertMathSnippet\(/);
   });
 });

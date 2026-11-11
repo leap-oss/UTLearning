@@ -231,6 +231,46 @@ export const topicLearningMaterialSchema = z
     };
   });
 
+export function isBoilerplateMasteryFormula(item) {
+  if (!item) return true;
+  const combined = `${item.title || ''} ${item.name || ''} ${item.content || ''} ${item.formulaOrSteps || ''}`.toLowerCase();
+  return (
+    combined.includes('tingkat penguasaan') ||
+    combined.includes('jumlah jawaban yang benar') ||
+    combined.includes('jumlah jawaban benar')
+  );
+}
+
+export const formulaOrProcedureItemSchema = z
+  .object({
+    title: z.string().trim().optional(),
+    name: z.string().trim().optional(),
+    content: z.string().trim().optional(),
+    formulaOrSteps: z.string().trim().optional(),
+    whenToUse: z.string().trim().optional().default(''),
+    sourceRefs: sourceRefsSchema,
+  })
+  .transform((item) => {
+    const resolvedTitle = item.title || item.name || 'Rumus / Teorema';
+    const resolvedContent = item.content || item.formulaOrSteps || '';
+    return {
+      title: resolvedTitle,
+      name: resolvedTitle,
+      content: resolvedContent,
+      formulaOrSteps: resolvedContent,
+      whenToUse: item.whenToUse || '',
+      sourceRefs: item.sourceRefs || [],
+    };
+  });
+
+export const formulasOrProceduresSchema = z
+  .array(formulaOrProcedureItemSchema)
+  .optional()
+  .default([])
+  .transform((items) =>
+    (items || []).filter((it) => it.content && !isBoilerplateMasteryFormula(it))
+  );
+
 export const studyPackSynthesisSchema = z.object({
   schemaVersion: z.number().int().optional().default(2),
   title: z
@@ -260,16 +300,7 @@ export const studyPackSynthesisSchema = z.object({
     )
     .optional()
     .default([]),
-  formulasOrProcedures: z
-    .array(
-      z.object({
-        title: z.string().trim().min(1),
-        content: z.string().trim().min(1),
-        sourceRefs: sourceRefsSchema,
-      })
-    )
-    .optional()
-    .default([]),
+  formulasOrProcedures: formulasOrProceduresSchema,
   coverageNotes: z.array(z.string()).optional().default([]),
   initialQuestions: z.array(mcqQuestionSchema).min(1).max(30),
 });
@@ -622,16 +653,7 @@ export const kbMaterialBatchSchema = z.object({
     )
     .optional()
     .default([]),
-  formulasOrProcedures: z
-    .array(
-      z.object({
-        title: z.string().trim().min(1),
-        content: z.string().trim().min(1),
-        sourceRefs: sourceRefsSchema,
-      })
-    )
-    .optional()
-    .default([]),
+  formulasOrProcedures: formulasOrProceduresSchema,
 });
 
 export function detectModuleKbStructure(reviewedSources = []) {
@@ -927,11 +949,15 @@ export function validateStudyPackCoverage(studyPack, reviewedSources = [], kbStr
   let coveredFormatifQuestions = 0;
   const missingQuestionPrompts = [];
 
-  const fullTopicText = allTopics
-    .map(
+  const fullTopicText = [
+    ...allTopics.map(
       (t) =>
-        `${t.topicLabel || ''} ${t.detailedExplanation || ''} ${t.bmpSummary || ''} ${(t.coreConcepts || []).join(' ')}`
-    )
+        `${t.topicLabel || ''} ${t.detailedExplanation || ''} ${t.bmpSummary || ''} ${(t.coreConcepts || []).join(' ')} ${(t.examples || []).map((e) => `${e.context || ''} ${e.illustration || ''}`).join(' ')}`
+    ),
+    ...(studyPack?.formulasOrProcedures || []).map(
+      (f) => `${f.name || ''} ${f.formulaOrSteps || ''} ${f.whenToUse || ''}`
+    ),
+  ]
     .join(' ')
     .toLowerCase();
 
@@ -939,14 +965,23 @@ export function validateStudyPackCoverage(studyPack, reviewedSources = [], kbStr
     const tqs = s.extractedContentJson?.transcribedQuestions || [];
     for (const tq of tqs) {
       totalFormatifQuestions++;
-      const words = (tq.prompt || '')
-        .toLowerCase()
+      const rawPrompt = (tq.prompt || '').toLowerCase();
+      const words = rawPrompt
+        .replace(/\\[a-z]+/g, ' ')
         .replace(/[^a-z0-9\s]/g, ' ')
         .split(/\s+/)
-        .filter((w) => w.length >= 4);
+        .filter((w) => w.length >= 3);
+
+      const mathTokens = Array.from(
+        new Set(rawPrompt.match(/\\(?:frac|sqrt|lim|sum|int|cup|cap|subset|subseteq|in|notin|neg|land|lor|rightarrow|leftrightarrow|forall|exists)|[a-z]\([a-z]\)/g) || [])
+      );
 
       const matchedWords = words.filter((w) => fullTopicText.includes(w));
-      const isRepresented = words.length === 0 || matchedWords.length / words.length >= 0.3;
+      const matchedMath = mathTokens.filter((mt) => fullTopicText.includes(mt));
+      const isRepresented =
+        (words.length === 0 && mathTokens.length === 0) ||
+        (words.length > 0 && matchedWords.length / words.length >= 0.3) ||
+        (mathTokens.length > 0 && matchedMath.length / mathTokens.length >= 0.5);
 
       if (isRepresented) {
         coveredFormatifQuestions++;
@@ -1009,38 +1044,44 @@ export function buildSystemInstruction({ isFinalBatch, totalQuestionCount, kbTit
   const qDirective = isFinalBatch
     ? `5. KESELARASAN PEDAGOGIS DENGAN SOAL (PEDAGOGICAL ALIGNMENT):
    - Rancang ${totalQuestionCount} butir soal latihan awal ("initialQuestions") yang representatif dan proporsional mencakup seluruh Kegiatan Belajar modul: ${kbTitles}.
-   - Seluruh soal WAJIB bersumber dan DAPAT DIJAWAB dari penjelasan yang telah ditulis di "detailedExplanation", "coreConcepts", atau "glossary".
+   - Seluruh soal WAJIB bersumber dan DAPAT DIJAWAB dari penjelasan yang telah ditulis di "detailedExplanation", "coreConcepts", "formulasOrProcedures", atau "glossary".
    - Setiap butir soal harus memiliki "topicLabel", "learningObjective", "questionType" ('single_choice', 'conceptual_application', 'scenario_based'), "difficulty", "sourceRefs", dan "explanation".
-   - Distribusikan butir soal secara seimbang menguji penerapan konseptual dan pemahaman mendalam, bukan sekadar hafalan.`
-    : `5. FOKUS KELENGKAPAN MATERI: Hasilkan seluruh topik dan glosarium secara mendalam tanpa melewatkan konsep apapun.`;
+   - Untuk soal matematika/hitungan/logika simbolik, tuliskan seluruh rumus di "prompt", "options", dan "explanation" dalam LaTeX ($...$ atau $$...$$) serta uraikan langkah penurunan/penyelesaian secara bertahap (step-by-step) di "explanation".
+   - Distribusikan butir soal secara seimbang menguji penerapan konseptual, perhitungan/pembuktian, dan pemahaman mendalam.`
+    : `5. FOKUS KELENGKAPAN MATERI & RUMUS: Hasilkan seluruh topik, rumus/prosedur ("formulasOrProcedures"), dan glosarium secara mendalam tanpa melewatkan konsep atau rumus apapun.`;
 
-  return `Anda adalah kurator dan arsitek penyusun bahan belajar komprehensif Universitas Terbuka (BMP) yang berfokus pada ketuntasan pemahaman mandiri mahasiswa.
+  return `Anda adalah kurator dan arsitek penyusun bahan belajar komprehensif Universitas Terbuka (BMP) yang berfokus pada ketuntasan pemahaman mandiri mahasiswa, termasuk untuk mata kuliah eksakta/matematika.
 
 PRINSIP WAJIB:
 1. JANGAN MERINGKAS TERLALU PENDEK: Mahasiswa belajar mandiri menggunakan bahan ini. Setiap topik WAJIB diuraikan secara mendalam dan jelas (minimal 4-5 paragraf naratif yang komprehensif per topik di "detailedExplanation"), bukan sekadar ringkasan permukaan.
 2. BEDAH TUNTAS & REVERSE-ENGINEERING SELURUH SOAL TES FORMATIF (100% CAKUPAN WAJIB):
    - Mahasiswa sering kali HANYA mengunggah halaman "Rangkuman" dan "Tes Formatif" (tanpa mengunggah puluhan halaman isi bab).
-   - Oleh karena itu, banyak konsep spesifik yang diujikan di soal "Tes Formatif" TIDAK tertulis di halaman "Rangkuman" singkat.
-   - Anda WAJIB membedah SETIAP butir soal yang ada di seluruh halaman Tes Formatif pada KB ini dan mengubahnya menjadi materi pembelajaran utuh di dalam "detailedExplanation", "coreConcepts", "comparisons", "commonMisconceptions", dan "glossary"!
-   - DILARANG MELEWATKAN SATU PUN konsep dari nomor soal Tes Formatif yang diunggah.
-   - Untuk soal berbentuk pengecualian ("...kecuali..."), uraikan secara eksplisit seluruh faktor/unsur yang benar DAN jelaskan mengapa opsi pengecoh tersebut dikecualikan (masukkan ke "detailedExplanation" dan "commonMisconceptions").
-   - Untuk soal yang memiliki opsi istilah teknis berbeda pada pilihan A/B/C/D, jelaskan definisi dan pembeda masing-masing istilah tersebut di "detailedExplanation", "comparisons", atau "glossary" sehingga mahasiswa memahami seluruh opsi.
-3. PEMISAHAN KONTEN OTENTIK BMP VS BANTUAN AI:
-   - "bmpSummary", "detailedExplanation", "coreConcepts", "comparisons", "processesOrStages": Berisi sintesis lengkap dari halaman Rangkuman DAN hasil bedah konsep seluruh butir soal Tes Formatif BMP. Pertahankan istilah asli BMP.
-   - "aiExplanation", "simpleAnalogy", "examples" (dengan isAiGenerated=true): Berisi analogi bahasa manusiawi, perumpamaan sehari-hari, dan contoh penerapan konkret untuk mempermudah pemahaman mahasiswa.
-4. STRUKTUR MATERI PER TOPIK (PISAHKAN PER KEGIATAN BELAJAR):
+   - Oleh karena itu, banyak konsep, sifat teorema, atau langkah penyelesaian spesifik yang diujikan di soal "Tes Formatif" TIDAK tertulis di halaman "Rangkuman" singkat.
+   - Anda WAJIB membedah SETIAP butir soal yang ada di seluruh halaman Tes Formatif pada KB ini dan mengubahnya menjadi materi pembelajaran utuh di dalam "detailedExplanation", "coreConcepts", "formulasOrProcedures", "comparisons", "examples", "commonMisconceptions", dan "glossary"!
+   - DILARANG MELEWATKAN SATU PUN konsep atau rumus dari nomor soal Tes Formatif yang diunggah.
+   - Untuk soal berbentuk pengecualian ("...kecuali..."), uraikan secara eksplisit seluruh sifat/unsur yang benar DAN jelaskan mengapa opsi pengecoh tersebut dikecualikan (masukkan ke "detailedExplanation" dan "commonMisconceptions").
+   - Untuk soal yang memiliki opsi istilah/rumus berbeda pada pilihan A/B/C/D, jelaskan definisi dan pembeda masing-masing istilah/rumus tersebut di "detailedExplanation", "comparisons", atau "glossary".
+3. STANDAR NOTASI MATEMATIKA, PERSAMAAN & LOGIKA SIMBOLIK (LaTeX):
+   - Seluruh persamaan matematika, pecahan ($\frac{a}{b}$), akar ($\sqrt{x}$), pangkat ($x^n$), indeks ($x_i$), limit ($\lim_{x \to a}$), integral, matriks, notasi himpunan ($\in, \subset, \subseteq, \cup, \cap, \emptyset, A^c, \mathbb{R}$), dan logika matematika ($\neg, \land, \lor, \Rightarrow, \Leftrightarrow, \equiv, \forall, \exists$) di SELURUH field teks WAJIB ditulis dengan format LaTeX: gunakan $...$ untuk inline math dan $$...$$ untuk rumus blok.
+   - Array "formulasOrProcedures" KHUSUS diisi apabila modul ini merupakan materi Matematika / Eksakta / Hitungan yang memuat rumus, teorema, hukum aljabar/logika/himpunan, atau identitas matematika (berisi "title", "content" dalam LaTeX, dan "sourceRefs").
+   - DILARANG mengisi "formulasOrProcedures" dengan rumus generik penilaian mandiri UT ("Tingkat Penguasaan = Jumlah Jawaban Benar / Jumlah Soal x 100%") atau tahapan manajemen/narasi teori non-matematika (tahapan teori/manajemen cukup ditaruh di "processesOrStages" pada topik terkait). Untuk modul teori non-matematika, kosongkan "formulasOrProcedures": [].
+   - Pada materi matematika/eksakta, bagian "examples" dan "processesOrStages" WAJIB menyertakan contoh soal beserta langkah penyelesaian bertahap (Diketahui -> Rumus/Teorema -> Substitusi/Penurunan -> Hasil Akhir).
+4. PEMISAHAN KONTEN OTENTIK BMP VS BANTUAN AI:
+   - "bmpSummary", "detailedExplanation", "coreConcepts", "comparisons", "processesOrStages", "formulasOrProcedures": Berisi sintesis lengkap dari halaman Rangkuman DAN hasil bedah konsep seluruh butir soal Tes Formatif BMP. Pertahankan istilah dan notasi asli BMP.
+   - "aiExplanation", "simpleAnalogy", "examples" (dengan isAiGenerated=true): Berisi analogi bahasa manusiawi, intuisi visual/logika, dan contoh penyelesaian tambahan untuk mempermudah pemahaman mahasiswa.
+5. STRUKTUR MATERI PER TOPIK (PISAHKAN PER KEGIATAN BELAJAR):
    - "topicLabel": Judul Kegiatan Belajar yang jelas (misal: "Kegiatan Belajar 1: ...").
    - "learningObjectives": 3-5 sasaran pembelajaran spesifik yang merangkum Rangkuman & Tes Formatif KB tersebut.
-   - "coreConcepts": Seluruh konsep/definisi kunci dari Rangkuman & seluruh nomor Tes Formatif.
-   - "detailedExplanation": Uraian penjelasan mendalam (4-6 paragraf terstruktur yang mencakup semua konsep di Rangkuman + semua materi yang ditanyakan pada setiap nomor soal Tes Formatif).
-   - "conceptRelationships": Keterhubungan atau ketergantungan antar konsep.
-   - "comparisons": Perbandingan terstruktur (itemA, itemB, distinction) untuk istilah-istilah yang berpotensi tertukar di soal Tes Formatif.
-   - "processesOrStages": Alur langkah, evolusi era, atau tahapan prosedural/manajemen.
-   - "commonMisconceptions": Miskonsepsi umum dan jebakan pengecualian ("kecuali") dari soal Tes Formatif beserta klarifikasi benarnya menurut BMP.
-   - "keyTakeaways": Poin-poin kesimpulan esensial yang lengkap.
+   - "coreConcepts": Seluruh konsep/definisi/sifat kunci dari Rangkuman & seluruh nomor Tes Formatif.
+   - "detailedExplanation": Uraian penjelasan mendalam (4-6 paragraf terstruktur yang mencakup semua konsep & rumus di Rangkuman + semua materi yang ditanyakan pada setiap nomor soal Tes Formatif).
+   - "conceptRelationships": Keterhubungan atau ketergantungan antar konsep/teorema.
+   - "comparisons": Perbandingan terstruktur (itemA, itemB, distinction) untuk istilah/notasi/rumus yang berpotensi tertukar.
+   - "processesOrStages": Alur langkah penyelesaian soal, pembuktian, atau tahapan prosedural.
+   - "commonMisconceptions": Miskonsepsi umum, kesalahan tanda/rumus/aljabar, dan jebakan pengecualian ("kecuali") dari soal Tes Formatif beserta klarifikasi benarnya menurut BMP.
+   - "keyTakeaways": Poin-poin kesimpulan dan rumus kunci esensial yang lengkap.
 ${qDirective}
 6. REFERENSI SUMBER ("sourceRefs"):
-   - Cantumkan referensi halaman BMP yang relevan (contoh: ["Halaman 1", "Halaman 3"]) pada setiap topik, istilah glosarium, dan butir soal.`;
+   - Cantumkan referensi halaman BMP yang relevan (contoh: ["Halaman 1", "Halaman 3"]) pada setiap topik, rumus, istilah glosarium, dan butir soal.`;
 }
 
 export async function defaultTwoStageStudyPackSynthesizer({
@@ -1476,8 +1517,9 @@ export async function defaultPracticeSetGenerator({
   const systemInstruction = `Anda adalah pembuat soal latihan adaptif Universitas Terbuka berbasis materi BMP.
 Aturan:
 1. Buat ${questionCount} butir soal pilihan ganda baru (opsi A, B, C, D) yang bersumber HANYA dari bahan materi belajar Study Pack di bawah.
-2. Setiap butir soal WAJIB menguji konsep yang dijelaskan dalam materi Study Pack. Jangan menguji konsep yang tidak ada di dalam materi.
-3. Sertakan "topicLabel", "learningObjective", "questionType" ('single_choice', 'conceptual_application', 'scenario_based'), "difficulty", "sourceRefs", dan "explanation" pada setiap butir soal.`;
+2. Setiap butir soal WAJIB menguji konsep atau rumus yang dijelaskan dalam materi Study Pack. Jangan menguji konsep yang tidak ada di dalam materi.
+3. Sertakan "topicLabel", "learningObjective", "questionType" ('single_choice', 'conceptual_application', 'scenario_based'), "difficulty", "sourceRefs", dan "explanation" pada setiap butir soal.
+4. Untuk soal matematika/hitungan/logika simbolik, tuliskan seluruh rumus, pecahan, pangkat, himpunan, dan simbol logika pada "prompt", "options", dan "explanation" menggunakan notasi LaTeX standar ($...$ untuk inline dan $$...$$ untuk rumus blok), serta sertakan langkah perhitungan/pembuktian step-by-step di "explanation".`;
 
   const prompt = `Modul ${moduleRecord.moduleNumber}: ${moduleRecord.title}
 Bahan Belajar Terstruktur (Study Pack):

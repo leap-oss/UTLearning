@@ -85,15 +85,15 @@
             </template>
           </div>
           <template x-if="rq.learningObjective">
-            <p class="meta" style="font-size: var(--text-xs)" x-text="`Sasaran: ${rq.learningObjective}`"></p>
+            <p class="meta" style="font-size: var(--text-xs)" x-html="renderMath(`Sasaran: ${rq.learningObjective}`)"></p>
           </template>
-          <p class="question-prompt" x-text="rq.prompt"></p>
+          <p class="question-prompt math-prose" x-html="renderMath(rq.prompt)"></p>
           <div class="answer-pair">
             <div :class="rq.isCorrect ? 'answer-cell answer-cell--ok' : 'answer-cell answer-cell--bad'">
               <span class="option-key" x-text="rq.selectedOption || '?'"></span>
               <span class="stack-2xs">
                 <span class="label">Jawaban Anda</span>
-                <span x-text="optionText(rq, rq.selectedOption)"></span>
+                <span x-html="renderMath(optionText(rq, rq.selectedOption))"></span>
               </span>
             </div>
             <template x-if="!rq.isCorrect">
@@ -101,14 +101,14 @@
                 <span class="option-key" x-text="rq.correctOption"></span>
                 <span class="stack-2xs">
                   <span class="label">Jawaban benar</span>
-                  <span x-text="optionText(rq, rq.correctOption)"></span>
+                  <span x-html="renderMath(optionText(rq, rq.correctOption))"></span>
                 </span>
               </div>
             </template>
           </div>
           <div class="ai-note">
             <span class="label">Pembahasan</span>
-            <p class="prose" x-text="rq.explanation"></p>
+            <p class="prose math-prose" x-html="renderMath(rq.explanation)"></p>
             <template x-if="(rq.sourceRefs || []).length">
               <p class="meta" x-text="`Sumber: ${(rq.sourceRefs || []).join(', ')}`"></p>
             </template>

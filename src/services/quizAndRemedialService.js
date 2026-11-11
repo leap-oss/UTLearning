@@ -830,13 +830,15 @@ Tugas Anda:
 1. PENDALAMAN MATERI TERFOKUS (Micro-Lesson sebelum kuis remedial):
    Untuk setiap topik yang salah, susun materi pendalaman terarah agar siswa memahaminya SEBELUM mengerjakan soal remedial:
    - "misconceptionAnalysis": Inti miskonsepsi mahasiswa secara ringkas.
-   - "whyYouWereTripped": Analisis kontras spesifik mengapa opsi salah yang dipilih siswa tampak mengecoh, dan bagaimana cara membedakannya dengan jawaban yang benar menurut BMP. DILARANG merangkum ulang seluruh bab, fokuslah pada titik beda (contrastive).
-   - "bmpKeyRule": 1-2 kalimat kaidah / aturan emas BMP yang wajib diingat.
-   - "practicalAnalogy": Analogi intuitif atau jembatan logika praktis sehari-hari agar siswa mudah mengingat konsep tersebut (diberi tanda bantuan AI).
+   - "whyYouWereTripped": Analisis kontras spesifik mengapa opsi salah yang dipilih siswa tampak mengecoh (untuk soal matematika: tunjukkan letak kekeliruan tanda, langkah aljabar, sifat himpunan/logika, atau rumus), dan bagaimana cara membedakannya dengan jawaban yang benar menurut BMP. DILARANG merangkum ulang seluruh bab, fokuslah pada titik beda (contrastive).
+   - "bmpKeyRule": 1-2 kalimat kaidah / aturan emas / rumus kunci BMP yang wajib diingat.
+   - "practicalAnalogy": Analogi intuitif atau jembatan logika praktis sehari-hari agar siswa mudah mengingat konsep/rumus tersebut (diberi tanda bantuan AI).
    - "reviewGuidance": Panduan bagian halaman/materi BMP yang perlu diperiksa.
 2. LATIHAN REMEDIAL:
-   Rancang ${targetCount} soal remedial pilihan ganda baru (4 opsi: A, B, C, D) yang menguji learning objective yang sama dari topik yang salah, namun dengan skenario/distraktor/konteks baru yang berbeda (JANGAN mengulang kalimat soal asli).
-3. Sertakan "learningObjective", "questionType" ('scenario_based', 'conceptual_application', 'single_choice'), tingkat "difficulty", dan "sourceRefs" pada setiap soal.`;
+   Rancang ${targetCount} soal remedial pilihan ganda baru (4 opsi: A, B, C, D) yang menguji learning objective yang sama dari topik yang salah, namun dengan angka/skenario/distraktor/konteks baru yang berbeda (JANGAN mengulang kalimat soal asli).
+3. STANDAR NOTASI MATEMATIKA (LaTeX):
+   Tuliskan seluruh persamaan, rumus, pecahan, pangkat, himpunan, dan simbol logika pada "diagnosticFeedback", "prompt", "options", dan "explanation" dalam notasi LaTeX standar ($...$ untuk inline dan $$...$$ untuk rumus blok), serta sertakan langkah penyelesaian step-by-step di "explanation".
+4. Sertakan "learningObjective", "questionType" ('scenario_based', 'conceptual_application', 'single_choice'), tingkat "difficulty", dan "sourceRefs" pada setiap soal.`;
 
   const prompt = `Hasil Pengerjaan Kuis: Skor ${attemptReview.score}% (${attemptReview.correctCount}/${attemptReview.totalCount})
 Target Jumlah Soal Remedial: ${targetCount}
@@ -1050,7 +1052,8 @@ Aturan wajib:
 2. Jangan membiarkan satu modul mendominasi seluruh soal.
 3. Setiap soal wajib mencantumkan "moduleNumber" yang sesuai dengan modul asalnya, "topicLabel", "explanation", dan "sourceRefs".
 4. Tingkat kesulitan target: ${difficulty}.
-5. Simulasi ini adalah latihan komprehensif dari materi yang tersedia, bukan prediksi soal UAS resmi. Jangan mengarang konsep di luar ringkasan modul yang diberikan.`;
+5. Untuk soal matematika/hitungan/logika simbolik, tuliskan seluruh rumus, pecahan, pangkat, himpunan, dan simbol logika pada "prompt", "options", dan "explanation" dalam notasi LaTeX standar ($...$ untuk inline dan $$...$$ untuk rumus blok) serta uraikan langkah penyelesaian step-by-step di "explanation".
+6. Simulasi ini adalah latihan komprehensif dari materi yang tersedia, bukan prediksi soal UAS resmi. Jangan mengarang konsep di luar ringkasan modul yang diberikan.`;
 
   const prompt = `Mata Kuliah: ${courseRecord.code} - ${courseRecord.name}
 Jumlah Soal: ${questionCount}
@@ -1143,9 +1146,11 @@ export async function enqueueCourseExamSimulation({
     studyPackId: sp.id,
     studyPackVersion: sp.version,
     overview: sp.summaryJson?.overview || '',
+    formulasOrProcedures: sp.summaryJson?.formulasOrProcedures || [],
     topics: (sp.summaryJson?.topics || []).map((t) => ({
       topicLabel: t.topicLabel,
-      bmpSummary: t.bmpSummary,
+      coreConcepts: t.coreConcepts || [],
+      bmpSummary: t.bmpSummary || t.detailedExplanation || '',
       sourceRefs: t.sourceRefs,
     })),
   }));

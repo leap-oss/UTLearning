@@ -146,7 +146,7 @@
                   <p><strong>Bagian yang mungkin salah baca</strong></p>
                   <ul class="takeaways" style="font-size: var(--text-sm)">
                     <template x-for="(amb, aIdx) in src.extractedContentJson.ambiguousParts" :key="aIdx">
-                      <li x-text="amb"></li>
+                      <li x-html="renderMath(amb)"></li>
                     </template>
                   </ul>
                 </div>
@@ -156,8 +156,20 @@
             <div x-show="editingSourceId !== src.id" class="stack-sm">
               <h3 x-show="src.extractedContentJson?.pageTitle" class="sub-title" x-text="src.extractedContentJson?.pageTitle"></h3>
               <div class="well">
-                <pre class="source-text" x-text="src.extractedContentJson?.extractedText || '(Belum ada teks hasil ekstraksi)'"></pre>
+                <div class="source-math-text" x-html="renderMath(src.extractedContentJson?.extractedText || '(Belum ada teks hasil ekstraksi)')"></div>
               </div>
+              <template x-if="visibleSourceFormulas(src).length > 0">
+                <div class="stack-xs" style="margin-top: var(--space-2xs)">
+                  <span class="label">Rumus, Teorema &amp; Notasi Matematika Terdeteksi</span>
+                  <div class="formula-grid">
+                    <template x-for="(fmt, fIdx) in visibleSourceFormulas(src)" :key="fIdx">
+                      <div class="formula-card">
+                        <div class="formula-card__body" x-html="renderFormula(fmt)"></div>
+                      </div>
+                    </template>
+                  </div>
+                </div>
+              </template>
             </div>
 
             <div x-show="editingSourceId === src.id" class="stack-md">
@@ -179,10 +191,59 @@
                   <input :id="`src-title-${src.id}`" type="text" x-model="sourceEditForm.pageTitle" class="input" />
                 </div>
               </div>
+
+              <!-- Toolbar Cepat Simbol & Equation Matematika (Khusus Modul Matematika) -->
+              <template x-if="isMathModule">
+                <div class="math-toolbar" aria-label="Bantuan simbol dan rumus matematika">
+                  <div class="split split--center">
+                    <span class="label" style="color: var(--color-accent)">Sisipkan Cepat Rumus &amp; Simbol Matematika (LaTeX)</span>
+                    <span class="meta">Gunakan <code>$...$</code> untuk rumus sebaris dan <code>$$...$$</code> untuk rumus blok</span>
+                  </div>
+                  <template x-for="(grp, gIdx) in mathToolbarGroups" :key="gIdx">
+                    <div class="math-toolbar-group">
+                      <span class="math-toolbar-label" x-text="grp.label"></span>
+                      <template x-for="(btn, bIdx) in grp.items" :key="bIdx">
+                        <button
+                          type="button"
+                          class="math-btn"
+                          :title="`${btn.title} (${btn.snippet})`"
+                          @click="insertMathSnippet(`src-text-${src.id}`, btn.snippet, 'extractedText')"
+                          x-text="btn.label"
+                        ></button>
+                      </template>
+                    </div>
+                  </template>
+                </div>
+              </template>
+
               <div class="field">
-                <label :for="`src-text-${src.id}`" class="field-label">Teks hasil ekstraksi</label>
+                <label :for="`src-text-${src.id}`" class="field-label" x-text="isMathModule ? 'Teks hasil ekstraksi (mendukung notasi LaTeX $...$)' : 'Teks hasil ekstraksi'"></label>
                 <textarea :id="`src-text-${src.id}`" rows="10" x-model="sourceEditForm.extractedText" class="textarea"></textarea>
               </div>
+
+              <!-- Live Preview Hasil Render Equation (Khusus Modul Matematika) -->
+              <template x-if="isMathModule">
+                <div class="field">
+                  <span class="field-label">Pratinjau Tampilan Teks &amp; Persamaan Matematika (Live Preview)</span>
+                  <div class="math-preview-box" x-html="renderMath(sourceEditForm.extractedText || '(Kosong)')"></div>
+                </div>
+              </template>
+
+              <!-- Edit Daftar Rumus / Teorema Terdeteksi (Khusus Modul Matematika) -->
+              <template x-if="isMathModule">
+                <div class="field">
+                  <label :for="`src-formulas-${src.id}`" class="field-label">Daftar rumus / teorema penting (1 baris per rumus, opsional)</label>
+                  <textarea
+                    :id="`src-formulas-${src.id}`"
+                    rows="4"
+                    placeholder="Contoh: Hukum De Morgan: $(A \cup B)^c = A^c \cap B^c$"
+                    x-model="sourceEditForm.formulasText"
+                    class="textarea"
+                    style="min-height: 6rem"
+                  ></textarea>
+                </div>
+              </template>
+
               <div class="dialog-actions">
                 <button type="button" @click="editingSourceId = null" class="btn btn--ghost">Batal</button>
                 <button
@@ -276,6 +337,15 @@
                 x-text="topic.topicLabel || topic.title"
               ></a>
             </template>
+            <template x-if="visibleFormulasOrProcedures.length > 0">
+              <a
+                class="toc-link"
+                :class="{ 'is-active': activeTopicId === 'formulas-procedures' }"
+                :aria-current="activeTopicId === 'formulas-procedures' ? 'location' : null"
+                href="#formulas-procedures"
+                @click="scrollToTopic('formulas-procedures', $event)"
+              >Rumus &amp; teorema</a>
+            </template>
             <template x-if="activeStudyPack.summaryJson?.glossary?.length > 0">
               <a
                 class="toc-link"
@@ -298,13 +368,13 @@
                 </div>
                 <h2 class="section-title" style="font-size: var(--text-3xl)" x-text="activeStudyPack.title"></h2>
               </div>
-              <p class="prose-lead" x-text="activeStudyPack.summaryJson?.overview"></p>
+              <p class="prose-lead" x-html="renderMath(activeStudyPack.summaryJson?.overview)"></p>
               <template x-if="activeStudyPack.summaryJson?.moduleLearningObjectives?.length > 0">
                 <div class="topic-objectives">
                   <span class="label">Capaian Pembelajaran Modul</span>
                   <ul class="takeaways">
                     <template x-for="(mlo, mIdx) in activeStudyPack.summaryJson.moduleLearningObjectives" :key="mIdx">
-                      <li x-text="mlo"></li>
+                      <li x-html="renderMath(mlo)"></li>
                     </template>
                   </ul>
                 </div>
@@ -316,7 +386,7 @@
                 <!-- Header & Source Reference -->
                 <div class="stack-2xs">
                   <span class="topic-number" x-text="`Topik ${tIdx + 1}`"></span>
-                  <h3 class="section-title" style="font-size: var(--text-2xl)" x-text="topic.topicLabel || topic.title"></h3>
+                  <h3 class="section-title" style="font-size: var(--text-2xl)" x-html="renderMath(topic.topicLabel || topic.title)"></h3>
                   <template x-if="(topic.sourceRefs || []).length">
                     <p class="meta" x-text="`Sumber BMP: ${(topic.sourceRefs || []).join(', ')}`"></p>
                   </template>
@@ -328,7 +398,7 @@
                     <span class="label">Sasaran Pembelajaran Topik</span>
                     <ul class="takeaways">
                       <template x-for="(obj, oIdx) in topic.learningObjectives" :key="oIdx">
-                        <li x-text="obj"></li>
+                        <li x-html="renderMath(obj)"></li>
                       </template>
                     </ul>
                   </div>
@@ -340,7 +410,7 @@
                     <span class="label">Konsep Kunci BMP</span>
                     <div class="cluster cluster--tight" style="gap: var(--space-xs)">
                       <template x-for="(cc, cIdx) in topic.coreConcepts" :key="cIdx">
-                        <span class="tag" style="background: var(--color-surface-2); border-color: var(--color-rule-2)" x-text="cc"></span>
+                        <span class="tag" style="background: var(--color-surface-2); border-color: var(--color-rule-2)" x-html="renderMath(cc)"></span>
                       </template>
                     </div>
                   </div>
@@ -348,19 +418,19 @@
 
                 <!-- Detailed Explanation (BMP-Grounded) -->
                 <div class="stack-xs">
-                  <p class="prose" style="white-space: pre-line" x-text="topic.detailedExplanation || topic.bmpSummary"></p>
+                  <p class="prose math-prose" x-html="renderMath(topic.detailedExplanation || topic.bmpSummary)"></p>
                 </div>
 
                 <!-- Comparisons & Distinctions -->
                 <template x-if="topic.comparisons && topic.comparisons.length > 0">
                   <div class="stack-xs" style="margin-top: var(--space-xs)">
-                    <span class="label">Pembeda & Perbandingan Konsep</span>
+                    <span class="label">Pembeda &amp; Perbandingan Konsep</span>
                     <div class="ledger" style="border: 1px solid var(--color-rule-2); border-radius: 4px; overflow: hidden">
                       <template x-for="(cmp, cpIdx) in topic.comparisons" :key="cpIdx">
                         <div class="ledger-row comparison-row">
-                          <span class="sub-title" style="font-weight: 500" x-text="cmp.itemA"></span>
-                          <span class="sub-title" style="font-weight: 500; color: var(--color-accent)" x-text="cmp.itemB"></span>
-                          <span class="meta" style="color: var(--color-ink-2)" x-text="cmp.distinction"></span>
+                          <span class="sub-title" style="font-weight: 500" x-html="renderMath(cmp.itemA)"></span>
+                          <span class="sub-title" style="font-weight: 500; color: var(--color-accent)" x-html="renderMath(cmp.itemB)"></span>
+                          <span class="meta" style="color: var(--color-ink-2)" x-html="renderMath(cmp.distinction)"></span>
                         </div>
                       </template>
                     </div>
@@ -370,14 +440,14 @@
                 <!-- Processes & Stages -->
                 <template x-if="topic.processesOrStages && topic.processesOrStages.length > 0">
                   <div class="stack-xs" style="margin-top: var(--space-xs)">
-                    <span class="label">Alur & Tahapan Prosedur</span>
+                    <span class="label">Alur &amp; Tahapan Prosedur</span>
                     <div class="stack-xs">
                       <template x-for="(stg, sIdx) in topic.processesOrStages" :key="sIdx">
                         <div class="step-node">
                           <span class="step-node-num" x-text="`Langkah ${stg.stepNumber || sIdx + 1}`"></span>
                           <div class="stack-2xs">
-                            <strong class="sub-title" style="font-size: var(--text-md)" x-text="stg.name"></strong>
-                            <p class="prose" style="font-size: var(--text-sm)" x-text="stg.description"></p>
+                            <strong class="sub-title" style="font-size: var(--text-md)" x-html="renderMath(stg.name)"></strong>
+                            <p class="prose math-prose" style="font-size: var(--text-sm)" x-html="renderMath(stg.description)"></p>
                           </div>
                         </div>
                       </template>
@@ -392,8 +462,8 @@
                     <ul class="takeaways">
                       <template x-for="(rel, rIdx) in topic.conceptRelationships" :key="rIdx">
                         <li>
-                          <strong x-text="`${rel.conceptA} ↔ ${rel.conceptB}: `"></strong>
-                          <span x-text="rel.relationship"></span>
+                          <strong x-html="renderMath(`${rel.conceptA} ↔ ${rel.conceptB}: `)"></strong>
+                          <span x-html="renderMath(rel.relationship)"></span>
                         </li>
                       </template>
                     </ul>
@@ -403,17 +473,17 @@
                 <!-- Concrete Examples -->
                 <template x-if="topic.examples && topic.examples.length > 0">
                   <div class="stack-xs" style="margin-top: var(--space-xs)">
-                    <span class="label">Contoh Penerapan</span>
+                    <span class="label">Contoh Penerapan &amp; Penyelesaian</span>
                     <div class="stack-xs">
                       <template x-for="(ex, eIdx) in topic.examples" :key="eIdx">
                         <div class="ai-note" style="border-left-color: var(--color-rule-2)">
                           <div class="cluster cluster--tight">
-                            <strong class="label" style="text-transform: none" x-text="ex.context"></strong>
+                            <strong class="label" style="text-transform: none" x-html="renderMath(ex.context)"></strong>
                             <template x-if="ex.isAiGenerated">
                               <span class="tag" style="font-size: var(--text-xs)">Ilustrasi Tambahan AI</span>
                             </template>
                           </div>
-                          <p class="prose" style="font-size: var(--text-sm)" x-text="ex.illustration"></p>
+                          <p class="prose math-prose" style="font-size: var(--text-sm)" x-html="renderMath(ex.illustration)"></p>
                         </div>
                       </template>
                     </div>
@@ -423,15 +493,15 @@
                 <!-- Common Misconceptions -->
                 <template x-if="topic.commonMisconceptions && topic.commonMisconceptions.length > 0">
                   <div class="callout callout--info" style="margin-top: var(--space-xs)">
-                    <span class="label" style="color: var(--color-accent)">Miskonsepsi Umum & Koreksi</span>
+                    <span class="label" style="color: var(--color-accent)">Miskonsepsi Umum &amp; Koreksi</span>
                     <div class="stack-xs" style="margin-top: var(--space-2xs)">
                       <template x-for="(misc, mIdx) in topic.commonMisconceptions" :key="mIdx">
                         <div class="stack-2xs">
                           <p class="meta" style="color: var(--color-ink-2)">
-                            <strong>Kekeliruan:</strong> <span x-text="misc.misconception"></span>
+                            <strong>Kekeliruan:</strong> <span x-html="renderMath(misc.misconception)"></span>
                           </p>
                           <p class="meta" style="color: var(--color-ink)">
-                            <strong>Klarifikasi BMP:</strong> <span x-text="misc.correction"></span>
+                            <strong>Klarifikasi BMP:</strong> <span x-html="renderMath(misc.correction)"></span>
                           </p>
                         </div>
                       </template>
@@ -442,8 +512,8 @@
                 <!-- AI Supplementary Explanation -->
                 <template x-if="topic.aiExplanation">
                   <aside class="ai-note">
-                    <span class="label">Penjelasan Pendamping AI — Analogi & Pemahaman Konsep</span>
-                    <p class="prose" x-text="topic.aiExplanation"></p>
+                    <span class="label">Penjelasan Pendamping AI — Analogi &amp; Pemahaman Konsep</span>
+                    <p class="prose math-prose" x-html="renderMath(topic.aiExplanation)"></p>
                   </aside>
                 </template>
 
@@ -453,11 +523,39 @@
                     <span class="label">Poin Kunci</span>
                     <ul class="takeaways">
                       <template x-for="(pt, pIdx) in topic.keyTakeaways" :key="pIdx">
-                        <li x-text="pt"></li>
+                        <li x-html="renderMath(pt)"></li>
                       </template>
                     </ul>
                   </div>
                 </template>
+              </section>
+            </template>
+
+            <!-- FORMULAS, THEOREMS & PROCEDURES SECTION (KHUSUS MATERI MATEMATIKA) -->
+            <template x-if="visibleFormulasOrProcedures.length > 0">
+              <section id="formulas-procedures" class="stack-md">
+                <div class="stack-2xs">
+                  <h3 class="section-title">Rumus, Teorema &amp; Prosedur Penyelesaian</h3>
+                  <p class="meta">Ringkasan persamaan matematika, sifat himpunan/logika, dan kaidah penyelesaian dari modul ini.</p>
+                </div>
+                <div class="formula-grid">
+                  <template x-for="(fp, fpIdx) in visibleFormulasOrProcedures" :key="fpIdx">
+                    <div class="formula-card">
+                      <div class="split split--center">
+                        <strong class="sub-title" style="font-size: var(--text-md)" x-html="renderMath(fp.title)"></strong>
+                        <template x-if="(fp.sourceRefs || []).length > 0">
+                          <span class="meta" x-text="(fp.sourceRefs || []).join(', ')"></span>
+                        </template>
+                      </div>
+                      <div class="formula-card__body" x-html="renderFormula(fp.content)"></div>
+                      <template x-if="fp.whenToUse">
+                        <p class="meta" style="color: var(--color-ink-2)">
+                          <strong>Kapan digunakan:</strong> <span x-html="renderMath(fp.whenToUse)"></span>
+                        </p>
+                      </template>
+                    </div>
+                  </template>
+                </div>
               </section>
             </template>
 
@@ -467,11 +565,11 @@
                 <dl class="glossary">
                   <template x-for="(g, gIdx) in activeStudyPack.summaryJson.glossary" :key="gIdx">
                     <div>
-                      <dt x-text="g.term"></dt>
+                      <dt x-html="renderMath(g.term)"></dt>
                       <dd>
-                        <p x-text="g.bmpDefinition"></p>
+                        <p x-html="renderMath(g.bmpDefinition)"></p>
                         <p x-show="g.simpleAnalogy" class="meta">
-                          <strong>Analogi AI:</strong> <span x-text="g.simpleAnalogy"></span>
+                          <strong>Analogi AI:</strong> <span x-html="renderMath(g.simpleAnalogy)"></span>
                         </p>
                       </dd>
                     </div>

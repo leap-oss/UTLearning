@@ -26,7 +26,7 @@
         <section class="callout callout--info" aria-labelledby="diag-overall-heading">
           <div class="stack-2xs">
             <h2 id="diag-overall-heading" class="sub-title">Diagnosis Utama</h2>
-            <p class="prose" style="font-size: var(--text-md)" x-text="activeQuestionSet.metadata.diagnosticFeedback.overallDiagnosis"></p>
+            <p class="prose math-prose" style="font-size: var(--text-md)" x-html="renderMath(activeQuestionSet.metadata.diagnosticFeedback.overallDiagnosis)"></p>
           </div>
         </section>
 
@@ -36,7 +36,7 @@
               <div class="split split--center">
                 <div class="cluster">
                   <span class="code" x-text="`Fokus ${tdIdx + 1}`"></span>
-                  <span class="tag" style="background: var(--color-surface-2); border-color: var(--color-rule-2)" x-text="td.topicLabel"></span>
+                  <span class="tag" style="background: var(--color-surface-2); border-color: var(--color-rule-2)" x-html="renderMath(td.topicLabel)"></span>
                   <template x-if="(td.sourceRefs || []).length">
                     <span class="meta" x-text="`Sumber: ${(td.sourceRefs || []).join(', ')}`"></span>
                   </template>
@@ -49,14 +49,14 @@
               <!-- Bedah Titik Kecohan (Contrastive explanation) -->
               <div class="stack-2xs">
                 <span class="label" style="color: var(--color-bad)">Bedah Titik Kecohan</span>
-                <p class="prose" style="font-size: var(--text-md)" x-text="td.whyYouWereTripped || td.misconceptionAnalysis"></p>
+                <p class="prose math-prose" style="font-size: var(--text-md)" x-html="renderMath(td.whyYouWereTripped || td.misconceptionAnalysis)"></p>
               </div>
 
               <!-- Kaidah Inti BMP -->
               <template x-if="td.bmpKeyRule || td.reviewGuidance">
                 <div class="topic-objectives" style="border-left-color: var(--color-ok)">
                   <span class="label" style="color: var(--color-ok)">Kaidah Kunci BMP</span>
-                  <p class="prose" style="font-size: var(--text-sm)" x-text="td.bmpKeyRule || td.reviewGuidance"></p>
+                  <p class="prose math-prose" style="font-size: var(--text-sm)" x-html="renderMath(td.bmpKeyRule || td.reviewGuidance)"></p>
                 </div>
               </template>
 
@@ -64,10 +64,10 @@
               <template x-if="td.practicalAnalogy">
                 <div class="ai-note">
                   <div class="cluster cluster--tight">
-                    <strong class="label" style="text-transform: none">Analogi & Cara Ingat Praktis</strong>
+                    <strong class="label" style="text-transform: none">Analogi &amp; Cara Ingat Praktis</strong>
                     <span class="tag" style="font-size: var(--text-xs)">Bantuan Logika AI</span>
                   </div>
-                  <p class="prose" style="font-size: var(--text-sm)" x-text="td.practicalAnalogy"></p>
+                  <p class="prose math-prose" style="font-size: var(--text-sm)" x-html="renderMath(td.practicalAnalogy)"></p>
                 </div>
               </template>
             </article>
@@ -120,7 +120,7 @@
                 <span class="tag" x-text="q.questionType.replace('_', ' ')"></span>
               </template>
             </div>
-            <p class="question-prompt" :id="`q-prompt-${q.id}`" x-text="q.prompt"></p>
+            <p class="question-prompt math-prose" :id="`q-prompt-${q.id}`" x-html="renderMath(q.prompt)"></p>
             <fieldset class="options" :aria-labelledby="`q-prompt-${q.id}`">
               <template x-for="opt in q.options || []" :key="opt.key">
                 <label class="option" :class="quizSelections[q.id] === opt.key ? 'is-selected' : ''">
@@ -132,7 +132,7 @@
                     @change="saveDraftProgress()"
                   />
                   <span class="option-key" x-text="opt.key" aria-hidden="true"></span>
-                  <span x-text="opt.text"></span>
+                  <span x-html="renderMath(opt.text)"></span>
                 </label>
               </template>
             </fieldset>
