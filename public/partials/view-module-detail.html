@@ -592,12 +592,7 @@
       </div>
       <template x-if="(activeModule?.studyPacks?.length || 0) > 0">
         <div class="cluster cluster--tight">
-          <select x-model="practiceQuestionCount" class="select" aria-label="Jumlah soal latihan">
-            <option value="5">5 soal</option>
-            <option value="10">10 soal (Standar)</option>
-            <option value="15">15 soal</option>
-            <option value="20">20 soal (Latihan Intensif)</option>
-          </select>
+          <span class="tag" style="background: var(--color-surface-2); border-color: var(--color-rule-2)" x-text="`${moduleFixedQuestionCount} soal (${moduleKbCountLabel})`"></span>
           <button type="button" @click="generateExtraPracticeSet()" :disabled="Boolean(activeAiJob)" class="btn">
             Buat latihan adaptif
           </button>

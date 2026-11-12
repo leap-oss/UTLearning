@@ -14,7 +14,7 @@ import { findJobById, getAiUsageSummary } from './services/aiJobRepository.js';
 import { defaultAiQueue } from './services/aiQueue.js';
 import { createCourseRouter } from './routes/courseRoutes.js';
 import { createLearningRouter } from './routes/learningRoutes.js';
-import { renderModularHtml } from './services/htmlRenderer.js';
+import { renderModularHtml, renderModularJs } from './services/htmlRenderer.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -46,6 +46,17 @@ export function createApp({
       return res.status(200).send(html);
     } catch (_err) {
       return res.status(500).send('Error rendering modular HTML.');
+    }
+  });
+
+  // Render modular frontend JS bundle (assembles public/js/modules/*.js + public/js/app.js)
+  app.get('/js/app.js', (_req, res) => {
+    try {
+      const js = renderModularJs(publicDir);
+      res.setHeader('Content-Type', 'application/javascript; charset=utf-8');
+      return res.status(200).send(js);
+    } catch (_err) {
+      return res.status(500).send('// Error rendering modular JS.');
     }
   });
 

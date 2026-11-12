@@ -44,8 +44,13 @@
         <div class="stack-2xs" style="min-width:0">
           <span class="sub-title" x-text="activeAiJob.label"></span>
           <p class="meta">
-            Percobaan <span class="figure" x-text="`${activeAiJob.attemptCount || 1}/${activeAiJob.maxAttempts || 3}`"></span>
-            &middot; <span x-text="activeAiJob.status"></span>
+            <template x-if="activeAiJob.maxAttempts && activeAiJob.maxAttempts > 1">
+              <span>
+                Percobaan <span class="figure" x-text="`${activeAiJob.attemptCount || 1}/${activeAiJob.maxAttempts || 3}`"></span>
+                &middot;
+              </span>
+            </template>
+            <span x-text="activeAiJob.status"></span>
           </p>
         </div>
       </div>

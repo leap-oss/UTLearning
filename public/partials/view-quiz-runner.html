@@ -103,15 +103,28 @@
             </template>
           </div>
           <h1 class="page-title" style="font-size: var(--text-3xl)" data-view-title tabindex="-1" x-text="activeQuestionSet?.title"></h1>
-          <p class="lede">
-            <span class="figure" x-text="activeQuestionSet?.questions?.length || 0"></span> soal pilihan ganda. Jawab semua, lalu kumpulkan untuk melihat pembahasan.
-          </p>
+          <div class="split split--center">
+            <p class="lede">
+              <span class="figure" x-text="activeQuestionSet?.questions?.length || 0"></span> soal pilihan ganda.
+              <template x-if="quizTotalPages > 1">
+                <span>
+                  Menampilkan soal <strong class="figure" x-text="quizPageStartIndex + 1"></strong>&ndash;<strong class="figure" x-text="quizPageEndIndex"></strong> (Tahap <span class="figure" x-text="quizCurrentPage + 1"></span>/<span class="figure" x-text="quizTotalPages"></span>).
+                </span>
+              </template>
+              <template x-if="quizTotalPages <= 1">
+                <span>Jawab semua, lalu kumpulkan untuk melihat pembahasan.</span>
+              </template>
+            </p>
+            <template x-if="quizTotalPages > 1">
+              <span class="tag" style="background: var(--color-surface-2); border-color: var(--color-rule-2)" x-text="`Tahap ${quizCurrentPage + 1} dari ${quizTotalPages}`"></span>
+            </template>
+          </div>
         </header>
 
-        <template x-for="(q, qIdx) in activeQuestionSet?.questions || []" :key="q.id">
-          <article class="question">
+        <template x-for="(q, qIdx) in currentQuizPageQuestions" :key="q.id">
+          <article class="question" :id="`question-card-${q.id}`">
             <div class="cluster">
-              <span class="code" x-text="`Soal ${qIdx + 1}`"></span>
+              <span class="code" x-text="`Soal ${quizPageStartIndex + qIdx + 1}`"></span>
               <span class="meta" x-text="q.topicLabel"></span>
               <template x-if="q.difficulty">
                 <span class="tag" x-text="difficultyLabel(q.difficulty)"></span>
@@ -152,15 +165,41 @@
         <p class="meta">
           <strong class="figure" x-text="answeredCount"></strong> dari
           <span class="figure" x-text="activeQuestionSet?.questions?.length || 0"></span> terjawab
+          <template x-if="quizTotalPages > 1">
+            <span>
+              &middot; Tahap ini: <strong class="figure" x-text="currentQuizPageAnsweredCount"></strong>/<span class="figure" x-text="currentQuizPageQuestions.length"></span>
+            </span>
+          </template>
         </p>
       </div>
-      <button
-        type="button"
-        @click="submitQuizAnswers()"
-        :disabled="submittingQuiz"
-        class="btn btn--primary btn--lg"
-        x-text="submittingQuiz ? 'Menilai…' : 'Kumpulkan jawaban'"
-      ></button>
+      <div class="cluster cluster--tight">
+        <template x-if="quizTotalPages > 1 && quizCurrentPage > 0">
+          <button
+            type="button"
+            @click="prevQuizPage()"
+            class="btn btn--ghost btn--lg"
+          >
+            &larr; Sebelumnya
+          </button>
+        </template>
+        <template x-if="quizCurrentPage < quizTotalPages - 1">
+          <button
+            type="button"
+            @click="nextQuizPage()"
+            class="btn btn--primary btn--lg"
+            x-text="isCurrentQuizPageComplete ? `Lanjut ke Soal ${quizPageEndIndex + 1}–${Math.min(quizPageEndIndex + quizPageSize, activeQuestionSet?.questions?.length || 0)} →` : `Jawab ${currentQuizPageQuestions.length - currentQuizPageAnsweredCount} soal lagi di tahap ini`"
+          ></button>
+        </template>
+        <template x-if="quizCurrentPage >= quizTotalPages - 1">
+          <button
+            type="button"
+            @click="submitQuizAnswers()"
+            :disabled="submittingQuiz"
+            class="btn btn--primary btn--lg"
+            x-text="submittingQuiz ? 'Menilai…' : 'Kumpulkan jawaban'"
+          ></button>
+        </template>
+      </div>
     </div>
   </div>
 </section>

@@ -2,8 +2,10 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
+import { renderModularJs } from '../src/services/htmlRenderer.js';
 import {
   detectModuleKbStructure,
+  resolveFixedQuestionCountByKb,
   planKbBatches,
   validateStudyPackCoverage,
   studyPackSynthesisSchema,
@@ -390,4 +392,57 @@ test('Two-Stage Synthesis Pipeline: Mengintegrasikan batch material KB 1, 2, 3 m
   assert.equal(coverageReport.kbsCovered, 3);
   assert.equal(coverageReport.totalKbsDetected, 3);
   assert.equal(coverageReport.validationPassed, true);
+});
+
+test('Fixed Question Count by KB: 1 KB = 10, 2 KB = 20, >= 3 KB = 25, and Runner paginates 10 per step', () => {
+  assert.equal(resolveFixedQuestionCountByKb(1), 10);
+  assert.equal(resolveFixedQuestionCountByKb(2), 20);
+  assert.equal(resolveFixedQuestionCountByKb(3), 25);
+  assert.equal(resolveFixedQuestionCountByKb(4), 25);
+
+  const runnerPath = path.join(process.cwd(), 'public/partials/view-quiz-runner.html');
+  const runnerHtml = fs.readFileSync(runnerPath, 'utf8');
+  assert.equal(runnerHtml.includes('currentQuizPageQuestions'), true);
+  assert.equal(runnerHtml.includes('nextQuizPage()'), true);
+  assert.equal(runnerHtml.includes('prevQuizPage()'), true);
+});
+
+test('Immediate Floating Progress Card: all actions call startAiJobFeedback before fetch so Vercel serverless shows progress immediately', () => {
+  const publicDir = path.join(process.cwd(), 'public');
+  const appJs = renderModularJs(publicDir);
+
+  assert.equal(appJs.includes('startAiJobFeedback('), true);
+  assert.equal(appJs.includes('clearPendingAiJobFeedback()'), true);
+
+  // Verify each major action sets activeAiJob before fetch
+  const requiredActions = [
+    'submitSourceExtraction()',
+    'saveSourceReview(sourceId',
+    'quickApproveSource(source)',
+    'generateStudyPackAndQuiz(regenerate = false)',
+    'generateExtraPracticeSet()',
+    'submitQuizAnswers()',
+    'generateRemedialFromAttempt(attemptId',
+    'generateExamSimulation()',
+    'submitCourseForm()',
+    'restoreCourse(course)',
+    'submitModuleForm()',
+    'handleTocImageUpload(event)',
+    'executeConfirmDialog()',
+  ];
+
+  for (const fnSig of requiredActions) {
+    const startIdx = appJs.indexOf(fnSig);
+    assert.notEqual(startIdx, -1, `Expected to find ${fnSig} in app.js`);
+    const slice = appJs.slice(startIdx, startIdx + 700);
+    const feedbackIdx = slice.indexOf('startAiJobFeedback(');
+    const fetchIdx = slice.indexOf('fetch(');
+    assert.notEqual(feedbackIdx, -1, `Expected ${fnSig} to call startAiJobFeedback`);
+    if (fetchIdx !== -1) {
+      assert.ok(
+        feedbackIdx < fetchIdx,
+        `Expected ${fnSig} to call startAiJobFeedback before fetch() so progress card renders immediately on Vercel`
+      );
+    }
+  }
 });
