@@ -50,7 +50,7 @@ export function createApp({
   });
 
   // Render modular frontend JS bundle (assembles public/js/modules/*.js + public/js/app.js)
-  app.get('/js/app.js', (_req, res) => {
+  app.get(['/js/app.js', '/js/app-bundle.js'], (_req, res) => {
     try {
       const js = renderModularJs(publicDir);
       res.setHeader('Content-Type', 'application/javascript; charset=utf-8');
