@@ -614,3 +614,54 @@ label.checklist-item { cursor: pointer; }
 .math-table tbody tr:nth-child(even) {
   background: color-mix(in oklab, var(--color-paper-3) 45%, transparent);
 }
+
+/* Flowchart SVG Diagrams */
+.flowchart-wrap {
+  margin: var(--space-xs) 0;
+  padding: var(--space-sm);
+  overflow-x: auto;
+  border: var(--rule-hair) solid var(--color-rule-2);
+  border-radius: var(--radius-sm);
+  background: var(--color-paper-2);
+  color: var(--color-ink);
+}
+
+.flowchart-svg {
+  display: block;
+  max-width: 100%;
+  height: auto;
+}
+
+.fc-node {
+  fill: var(--color-paper-3);
+  stroke: var(--color-ink-2);
+  stroke-width: 1.5;
+}
+
+.fc-node--decision {
+  stroke: var(--color-accent);
+}
+
+.fc-node--term {
+  fill: color-mix(in oklab, var(--color-accent-soft) 50%, var(--color-paper-3));
+}
+
+.fc-edge {
+  fill: none;
+  stroke: var(--color-ink-2);
+  stroke-width: 1.5;
+}
+
+.fc-label {
+  fill: var(--color-ink);
+  font-family: var(--font-body);
+  font-size: 11px;
+  font-weight: 500;
+}
+
+.fc-edge-label {
+  fill: var(--color-accent);
+  font-family: var(--font-body);
+  font-size: 10px;
+  font-weight: 500;
+}

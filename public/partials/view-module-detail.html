@@ -221,13 +221,14 @@
                 <textarea :id="`src-text-${src.id}`" rows="10" x-model="sourceEditForm.extractedText" class="textarea"></textarea>
               </div>
 
-              <!-- Live Preview Hasil Render Equation (Khusus Modul Matematika) -->
-              <template x-if="isMathModule">
-                <div class="field">
-                  <span class="field-label">Pratinjau Tampilan Teks &amp; Persamaan Matematika (Live Preview)</span>
-                  <div class="math-preview-box" x-html="renderMath(sourceEditForm.extractedText || '(Kosong)')"></div>
-                </div>
-              </template>
+              <!-- Live Preview Hasil Render Teks / Equation -->
+              <div class="field">
+                <span
+                  class="field-label"
+                  x-text="isMathModule ? 'Pratinjau Tampilan Teks &amp; Persamaan Matematika (Live Preview)' : 'Pratinjau Tampilan Teks (Live Preview)'"
+                ></span>
+                <div class="math-preview-box" x-html="renderMath(sourceEditForm.extractedText || '(Kosong)')"></div>
+              </div>
 
               <!-- Edit Daftar Rumus / Teorema Terdeteksi (Khusus Modul Matematika) -->
               <template x-if="isMathModule">

@@ -13,31 +13,15 @@ window.AppModules.mathAndFormatters = {
   },
 
   get isMathModule() {
-    const courseCode = String(this.activeModule?.course?.code || this.activeCourse?.code || '');
-    const courseName = String(this.activeModule?.course?.name || this.activeCourse?.name || '');
-    const modTitle = String(this.activeModule?.title || '');
-    const combinedMeta = `${courseCode} ${courseName} ${modTitle}`.toLowerCase();
+    const courseCode = String(this.activeModule?.course?.code || this.activeCourse?.code || '').trim();
+    const courseName = String(this.activeModule?.course?.name || this.activeCourse?.name || '').toLowerCase();
 
-    if (
-      /^(?:mata|stat|sats)/i.test(courseCode.trim()) ||
-      /\b(?:matematika|kalkulus|aljabar|statistika|geometri|trigonometri|himpunan|logika|bilangan|kombinatorika|peluang|diskrit|matriks|persamaan|fungsi|limit|turunan|integral)\b/i.test(
-        combinedMeta
+    return (
+      /^(?:mata|stat|sats)/i.test(courseCode) ||
+      /\b(?:matematika|kalkulus|aljabar|statistika|geometri|trigonometri|probabilitas|ekonometrika)\b/i.test(
+        courseName
       )
-    ) {
-      return true;
-    }
-
-    const latexPattern = /\$(?!\$)[^$]+\$|\\(?:frac|sqrt|lim|sum|int|cup|cap|subset|subseteq|in|notin|neg|land|lor|Rightarrow|Leftrightarrow|forall|exists|mathbb)/;
-    const sources = this.activeModule?.sources || [];
-    if (
-      sources.some((s) =>
-        latexPattern.test(String(s.extractedContentJson?.extractedText || ''))
-      )
-    ) {
-      return true;
-    }
-
-    return false;
+    );
   },
 
   get visibleFormulasOrProcedures() {
@@ -295,49 +279,304 @@ window.AppModules.mathAndFormatters = {
     return s;
   },
 
+  parseFlowchartNodeToken(rawToken, nodeMap) {
+    const token = String(rawToken || '').trim();
+    if (!token) return null;
+
+    let id = token;
+    let shape = 'rect';
+    let label = token;
+    let explicitShape = false;
+
+    let m;
+    if ((m = token.match(/^([A-Za-z0-9_]+)\(\[([\s\S]*?)\]\)$/))) {
+      id = m[1]; shape = 'terminator'; label = m[2].trim(); explicitShape = true;
+    } else if ((m = token.match(/^([A-Za-z0-9_]+)\(\(([\s\S]*?)\)\)$/))) {
+      id = m[1]; shape = 'terminator'; label = m[2].trim(); explicitShape = true;
+    } else if ((m = token.match(/^([A-Za-z0-9_]+)\(\s*([\s\S]*?)\s*\)$/))) {
+      id = m[1]; shape = 'terminator'; label = m[2].trim(); explicitShape = true;
+    } else if ((m = token.match(/^([A-Za-z0-9_]+)\[\/([\s\S]*?)\/\]$/))) {
+      id = m[1]; shape = 'io'; label = m[2].trim(); explicitShape = true;
+    } else if ((m = token.match(/^([A-Za-z0-9_]+)\{([\s\S]*?)\}$/))) {
+      id = m[1]; shape = 'decision'; label = m[2].trim(); explicitShape = true;
+    } else if ((m = token.match(/^([A-Za-z0-9_]+)\[([\s\S]*?)\]$/))) {
+      id = m[1];
+      const inner = m[2].trim();
+      if (inner === '.') {
+        shape = 'port'; label = ''; explicitShape = true;
+      } else {
+        shape = 'rect'; label = inner; explicitShape = true;
+      }
+    }
+
+    if (!nodeMap.has(id)) {
+      nodeMap.set(id, { id, shape, label });
+    } else if (explicitShape) {
+      const existing = nodeMap.get(id);
+      existing.shape = shape;
+      existing.label = label;
+    }
+    return id;
+  },
+
+  renderFlowchartSvg(blockText) {
+    const lines = String(blockText || '')
+      .split('\n')
+      .map((l) => l.trim())
+      .filter((l) => l && !l.startsWith('%%'));
+
+    if (lines.length === 0) return '';
+
+    let direction = 'TD';
+    let startIdx = 0;
+    const headerMatch = lines[0].match(/^(?:flowchart|graph)\s+(TD|TB|LR|RL)/i);
+    if (headerMatch) {
+      const dir = headerMatch[1].toUpperCase();
+      direction = dir === 'LR' || dir === 'RL' ? 'LR' : 'TD';
+      startIdx = 1;
+    }
+
+    const nodeMap = new Map();
+    const edges = [];
+
+    for (let i = startIdx; i < lines.length; i++) {
+      const line = lines[i].replace(/;\s*$/, '');
+      if (!line) continue;
+
+      // Split chained edges like A --> B -->|Ya| C
+      const parts = line.split(/\s*(-->(?:\|[^|]*\|)?|---\s*)\s*/);
+      if (parts.length === 1) {
+        this.parseFlowchartNodeToken(parts[0], nodeMap);
+        continue;
+      }
+
+      let prevId = this.parseFlowchartNodeToken(parts[0], nodeMap);
+      for (let p = 1; p < parts.length; p += 2) {
+        const connector = parts[p] || '-->';
+        const nextToken = parts[p + 1];
+        if (!nextToken) break;
+        const nextId = this.parseFlowchartNodeToken(nextToken, nodeMap);
+        const labelMatch = connector.match(/\|([^|]*)\|/);
+        if (prevId && nextId) {
+          edges.push({ from: prevId, to: nextId, label: labelMatch ? labelMatch[1].trim() : '' });
+        }
+        prevId = nextId;
+      }
+    }
+
+    const nodes = Array.from(nodeMap.values());
+    if (nodes.length === 0) {
+      return `<pre class="well">${this.escapeHtml(blockText)}</pre>`;
+    }
+
+    // Assign (layer, lane) via BFS from root nodes
+    const inDeg = new Map(nodes.map((n) => [n.id, 0]));
+    const adj = new Map(nodes.map((n) => [n.id, []]));
+    for (const e of edges) {
+      inDeg.set(e.to, (inDeg.get(e.to) || 0) + 1);
+      adj.get(e.from)?.push(e);
+    }
+
+    const roots = nodes.filter((n) => (inDeg.get(n.id) || 0) === 0);
+    if (roots.length === 0) roots.push(nodes[0]);
+
+    const layerOf = new Map();
+    const laneOf = new Map();
+    const occupied = new Set();
+    const queue = [];
+
+    roots.forEach((r, idx) => {
+      layerOf.set(r.id, 0);
+      laneOf.set(r.id, idx);
+      occupied.add(`0:${idx}`);
+      queue.push(r.id);
+    });
+
+    while (queue.length > 0) {
+      const curr = queue.shift();
+      const currLayer = layerOf.get(curr) || 0;
+      const currLane = laneOf.get(curr) || 0;
+      const outEdges = adj.get(curr) || [];
+
+      outEdges.forEach((e, idx) => {
+        if (layerOf.has(e.to)) return;
+        const nextLayer = currLayer + (idx === 0 || outEdges.length === 1 ? 1 : 0);
+        let nextLane = currLane + idx;
+        while (occupied.has(`${nextLayer}:${nextLane}`)) {
+          nextLane += 1;
+        }
+        layerOf.set(e.to, nextLayer);
+        laneOf.set(e.to, nextLane);
+        occupied.add(`${nextLayer}:${nextLane}`);
+        queue.push(e.to);
+      });
+    }
+
+    // Fallback for any disconnected nodes
+    nodes.forEach((n, idx) => {
+      if (!layerOf.has(n.id)) {
+        layerOf.set(n.id, idx);
+        laneOf.set(n.id, 0);
+      }
+    });
+
+    const isLR = direction === 'LR';
+    const hasLabels = nodes.some((n) => n.label.length > 0);
+    const cellW = hasLabels ? 176 : 86;
+    const cellH = hasLabels ? 86 : 64;
+    const padX = 24;
+    const padY = 20;
+
+    let maxLayer = 0;
+    let maxLane = 0;
+    const pos = new Map();
+
+    for (const n of nodes) {
+      const layer = layerOf.get(n.id) || 0;
+      const lane = laneOf.get(n.id) || 0;
+      if (layer > maxLayer) maxLayer = layer;
+      if (lane > maxLane) maxLane = lane;
+
+      const cx = padX + (isLR ? layer : lane) * cellW + cellW / 2;
+      const cy = padY + (isLR ? lane : layer) * cellH + cellH / 2;
+      const textLen = n.label.length;
+      const w = n.shape === 'port' ? 6 : n.label ? Math.min(164, Math.max(88, textLen * 7.2 + 28)) : (n.shape === 'decision' ? 44 : 58);
+      const h = n.shape === 'port' ? 6 : n.shape === 'decision' ? (n.label ? 50 : 38) : (n.label ? 38 : 28);
+      pos.set(n.id, { cx, cy, w, h, node: n });
+    }
+
+    const svgW = padX * 2 + ((isLR ? maxLayer : maxLane) + 1) * cellW;
+    const svgH = padY * 2 + ((isLR ? maxLane : maxLayer) + 1) * cellH;
+    const markerId = `fc-arrow-${Math.random().toString(36).slice(2, 8)}`;
+
+    let svg = `<div class="flowchart-wrap" role="img" aria-label="Diagram alir flowchart"><svg class="flowchart-svg" viewBox="0 0 ${svgW} ${svgH}" width="${svgW}" height="${svgH}" xmlns="http://www.w3.org/2000/svg">`;
+    svg += `<defs><marker id="${markerId}" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M 0 1 L 10 5 L 0 9 z" fill="currentColor" /></marker></defs>`;
+
+    // Draw edges first
+    for (const e of edges) {
+      const a = pos.get(e.from);
+      const b = pos.get(e.to);
+      if (!a || !b) continue;
+
+      const dx = b.cx - a.cx;
+      const dy = b.cy - a.cy;
+      let x1 = a.cx;
+      let y1 = a.cy;
+      let x2 = b.cx;
+      let y2 = b.cy;
+
+      if (Math.abs(dy) >= Math.abs(dx)) {
+        const s = dy >= 0 ? 1 : -1;
+        y1 = a.cy + s * (a.h / 2);
+        y2 = b.cy - s * (b.h / 2 + 2);
+      } else {
+        const s = dx >= 0 ? 1 : -1;
+        x1 = a.cx + s * (a.w / 2);
+        x2 = b.cx - s * (b.w / 2 + 2);
+      }
+
+      const pathD =
+        Math.abs(x1 - x2) < 2 || Math.abs(y1 - y2) < 2
+          ? `M ${x1} ${y1} L ${x2} ${y2}`
+          : `M ${x1} ${y1} L ${x2} ${y1} L ${x2} ${y2}`;
+
+      svg += `<path d="${pathD}" class="fc-edge" marker-end="url(#${markerId})" />`;
+      if (e.label) {
+        const lx = (x1 + x2) / 2;
+        const ly = (y1 + y2) / 2 - 4;
+        svg += `<text x="${lx}" y="${ly}" class="fc-edge-label" text-anchor="middle">${this.escapeHtml(e.label)}</text>`;
+      }
+    }
+
+    // Draw nodes
+    for (const p of pos.values()) {
+      const { cx, cy, w, h, node } = p;
+      if (node.shape === 'port') continue;
+
+      const x = cx - w / 2;
+      const y = cy - h / 2;
+      if (node.shape === 'terminator') {
+        svg += `<rect x="${x}" y="${y}" width="${w}" height="${h}" rx="${h / 2}" ry="${h / 2}" class="fc-node fc-node--term" />`;
+      } else if (node.shape === 'decision') {
+        const pts = `${cx},${y} ${x + w},${cy} ${cx},${y + h} ${x},${cy}`;
+        svg += `<polygon points="${pts}" class="fc-node fc-node--decision" />`;
+      } else if (node.shape === 'io') {
+        const skew = 10;
+        const pts = `${x + skew},${y} ${x + w},${y} ${x + w - skew},${y + h} ${x},${y + h}`;
+        svg += `<polygon points="${pts}" class="fc-node fc-node--io" />`;
+      } else {
+        svg += `<rect x="${x}" y="${y}" width="${w}" height="${h}" rx="3" ry="3" class="fc-node" />`;
+      }
+
+      if (node.label) {
+        const shortLabel = node.label.length > 26 ? `${node.label.slice(0, 24)}…` : node.label;
+        svg += `<text x="${cx}" y="${cy + 4}" class="fc-label" text-anchor="middle">${this.escapeHtml(shortLabel)}</text>`;
+      }
+    }
+
+    svg += '</svg></div>';
+    return svg;
+  },
+
   renderMath(input) {
     if (input == null || input === '') return '';
-    const normalized = this.normalizeCollapsedMathLayout(String(input));
+    const flowchartBlocks = [];
+    const withPlaceholders = String(input).replace(
+      /```(?:flowchart|mermaid)\s*\n([\s\S]*?)```/gi,
+      (_match, body) => {
+        const idx = flowchartBlocks.length;
+        flowchartBlocks.push(this.renderFlowchartSvg(body));
+        return `\n@@FLOWCHART_${idx}@@\n`;
+      }
+    );
+
+    const normalized = this.normalizeCollapsedMathLayout(withPlaceholders);
     const lines = normalized.split('\n');
-
     const hasAnyTableLine = lines.some((l) => this.isTableRowLine(l));
+
+    let rendered;
     if (!hasAnyTableLine) {
-      return this.renderInlineMathSegment(normalized);
+      rendered = this.renderInlineMathSegment(normalized);
+    } else {
+      const outputBlocks = [];
+      let textBuffer = [];
+      let tableBuffer = [];
+
+      const flushText = () => {
+        if (textBuffer.length > 0) {
+          outputBlocks.push(this.renderInlineMathSegment(textBuffer.join('\n')));
+          textBuffer = [];
+        }
+      };
+
+      const flushTable = () => {
+        if (tableBuffer.length >= 2) {
+          outputBlocks.push(this.buildHtmlTable(tableBuffer));
+        } else if (tableBuffer.length === 1) {
+          outputBlocks.push(this.renderInlineMathSegment(tableBuffer[0]));
+        }
+        tableBuffer = [];
+      };
+
+      for (const line of lines) {
+        if (this.isTableRowLine(line) || (tableBuffer.length > 0 && this.isTableDividerLine(line))) {
+          flushText();
+          tableBuffer.push(line);
+        } else {
+          flushTable();
+          textBuffer.push(line);
+        }
+      }
+      flushTable();
+      flushText();
+
+      rendered = outputBlocks.join('\n');
     }
 
-    const outputBlocks = [];
-    let textBuffer = [];
-    let tableBuffer = [];
-
-    const flushText = () => {
-      if (textBuffer.length > 0) {
-        outputBlocks.push(this.renderInlineMathSegment(textBuffer.join('\n')));
-        textBuffer = [];
-      }
-    };
-
-    const flushTable = () => {
-      if (tableBuffer.length >= 2) {
-        outputBlocks.push(this.buildHtmlTable(tableBuffer));
-      } else if (tableBuffer.length === 1) {
-        outputBlocks.push(this.renderInlineMathSegment(tableBuffer[0]));
-      }
-      tableBuffer = [];
-    };
-
-    for (const line of lines) {
-      if (this.isTableRowLine(line) || (tableBuffer.length > 0 && this.isTableDividerLine(line))) {
-        flushText();
-        tableBuffer.push(line);
-      } else {
-        flushTable();
-        textBuffer.push(line);
-      }
+    if (flowchartBlocks.length > 0) {
+      rendered = rendered.replace(/@@FLOWCHART_(\d+)@@/g, (_m, idx) => flowchartBlocks[Number(idx)] || '');
     }
-    flushTable();
-    flushText();
-
-    return outputBlocks.join('\n');
+    return rendered;
   },
 
   renderFormula(input) {

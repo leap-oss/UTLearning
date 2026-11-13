@@ -504,7 +504,8 @@ Aturan:
 1. Buat ${questionCount} butir soal pilihan ganda baru (opsi A, B, C, D) yang bersumber HANYA dari bahan materi belajar Study Pack di bawah.
 2. Setiap butir soal WAJIB menguji konsep atau rumus yang dijelaskan dalam materi Study Pack. Jangan menguji konsep yang tidak ada di dalam materi.
 3. Sertakan "topicLabel", "learningObjective", "questionType" ('single_choice', 'conceptual_application', 'scenario_based'), "difficulty", "sourceRefs", dan "explanation" pada setiap butir soal.
-4. Untuk soal matematika/hitungan/logika simbolik, tuliskan seluruh rumus, pecahan, pangkat, himpunan, dan simbol logika pada "prompt", "options", dan "explanation" menggunakan notasi LaTeX standar ($...$ untuk inline dan $$...$$ untuk rumus blok), serta sertakan langkah perhitungan/pembuktian step-by-step di "explanation".`;
+4. Untuk soal matematika/hitungan/logika simbolik, tuliskan seluruh rumus, pecahan, pangkat, himpunan, dan simbol logika pada "prompt", "options", dan "explanation" menggunakan notasi LaTeX standar ($...$ untuk inline dan $$...$$ untuk rumus blok), serta sertakan langkah perhitungan/pembuktian step-by-step di "explanation".
+5. Untuk soal Algoritma / Flowchart, Anda BOLEH menyisipkan diagram alir dengan blok \`\`\`flowchart ... \`\`\` (sintaks: \`([Terminator])\`, \`[Proses]\`, \`[/Input-Output/]\`, \`{Keputusan}\`, \`-->\`, \`-->|label|\`) pada "prompt", "options", atau "explanation" — aplikasi akan otomatis merendernya menjadi diagram SVG.`;
 
   const prompt = `Modul ${moduleRecord.moduleNumber}: ${moduleRecord.title}
 Bahan Belajar Terstruktur (Study Pack):
