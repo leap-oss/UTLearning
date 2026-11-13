@@ -5,6 +5,7 @@ import path from 'node:path';
 import { renderModularJs } from '../src/services/htmlRenderer.js';
 import {
   detectModuleKbStructure,
+  countDistinctKbsInTopics,
   resolveFixedQuestionCountByKb,
   planKbBatches,
   validateStudyPackCoverage,
@@ -405,6 +406,52 @@ test('Fixed Question Count by KB: 1 KB = 10, 2 KB = 20, >= 3 KB = 25, and Runner
   assert.equal(runnerHtml.includes('currentQuizPageQuestions'), true);
   assert.equal(runnerHtml.includes('nextQuizPage()'), true);
   assert.equal(runnerHtml.includes('prevQuizPage()'), true);
+
+  // Adding extra 'materi' pages to a 2-KB module must NOT inflate KB count to 3 (stays 2 KB = 20 soal)
+  const twoKbWithExtraMaterial = [
+    createMockSource({
+      pageOrder: 1,
+      label: 'rangkuman',
+      title: 'Rangkuman Kegiatan Belajar 1',
+      text: 'Rangkuman Kegiatan Belajar 1 tentang konsep dasar.',
+    }),
+    createMockSource({
+      pageOrder: 2,
+      label: 'tes_formatif',
+      title: 'Tes Formatif 1',
+      text: 'Tes Formatif 1 soal nomor 1 sampai 5.',
+    }),
+    createMockSource({
+      pageOrder: 3,
+      label: 'rangkuman',
+      title: 'Rangkuman Kegiatan Belajar 2',
+      text: 'Rangkuman Kegiatan Belajar 2 tentang arsitektur.',
+    }),
+    createMockSource({
+      pageOrder: 4,
+      label: 'tes_formatif',
+      title: 'Tes Formatif 2',
+      text: 'Tes Formatif 2 soal nomor 1 sampai 5.',
+    }),
+    createMockSource({
+      pageOrder: 5,
+      label: 'materi',
+      title: 'Materi Tambahan Contoh Kasus',
+      text: 'Penjelasan tambahan dan tabel ilustrasi pendukung KB 2.',
+    }),
+  ];
+  const detectedWithExtra = detectModuleKbStructure(twoKbWithExtraMaterial);
+  assert.equal(detectedWithExtra.length, 2);
+  assert.equal(resolveFixedQuestionCountByKb(detectedWithExtra.length), 20);
+
+  // Even if Study Pack topics has 3 entries (KB 1, KB 2, and a supplementary topic), countDistinctKbsInTopics returns 2
+  const topicsWithExtra = [
+    { topicLabel: 'Kegiatan Belajar 1: Konsep Dasar' },
+    { topicLabel: 'Kegiatan Belajar 2: Arsitektur Sistem' },
+    { topicLabel: 'Materi Tambahan: Studi Kasus' },
+  ];
+  assert.equal(countDistinctKbsInTopics(topicsWithExtra), 2);
+  assert.equal(resolveFixedQuestionCountByKb(countDistinctKbsInTopics(topicsWithExtra)), 20);
 });
 
 test('Immediate Floating Progress Card: all actions call startAiJobFeedback before fetch so Vercel serverless shows progress immediately', () => {

@@ -22,6 +22,7 @@ import {
 } from './studyPackSchemas.js';
 import {
   detectModuleKbStructure,
+  countDistinctKbsInTopics,
   resolveFixedQuestionCountByKb,
   planKbBatches,
   validateStudyPackCoverage,
@@ -339,7 +340,7 @@ export async function enqueueStudyPackSynthesis({
       ? Math.min(25, Math.max(3, Number(questionCount) || autoFixedQuestionCount))
       : autoFixedQuestionCount;
   const config = getEnvConfig();
-  const model = config.geminiModel || 'gemini-3.5-flash';
+  const model = config.geminiModel || 'gemini-4-hydrogen';
 
   const sourceDigest = extractedSources.map((s) => ({
     id: s.id,
@@ -556,9 +557,26 @@ export async function enqueueAdditionalQuestionSet({
     throw err;
   }
 
+  const sources = await db
+    .select()
+    .from(sourceAssets)
+    .where(eq(sourceAssets.moduleId, moduleId))
+    .orderBy(asc(sourceAssets.pageOrder), asc(sourceAssets.createdAt));
+
+  const extractedSources = sources.filter(
+    (s) =>
+      s.extractedContentJson &&
+      typeof s.extractedContentJson.extractedText === 'string' &&
+      s.extractedContentJson.extractedText.trim().length > 0
+  );
+
+  const detectedSourceKbs =
+    extractedSources.length > 0 ? detectModuleKbStructure(extractedSources).length : 0;
+
   const packTopicsCount =
+    detectedSourceKbs ||
     latestPack.summaryJson?.coverageReport?.totalKbsDetected ||
-    (latestPack.summaryJson?.topics || []).length ||
+    countDistinctKbsInTopics(latestPack.summaryJson?.topics || []) ||
     1;
   const fixedPracticeCount = resolveFixedQuestionCountByKb(packTopicsCount);
   const boundedCount =
@@ -566,7 +584,7 @@ export async function enqueueAdditionalQuestionSet({
       ? Math.min(25, Math.max(3, Number(questionCount) || fixedPracticeCount))
       : fixedPracticeCount;
   const config = getEnvConfig();
-  const model = config.geminiModel || 'gemini-3.5-flash';
+  const model = config.geminiModel || 'gemini-4-hydrogen';
 
   const existingSets = await db
     .select({ id: questionSets.id })

@@ -50,6 +50,7 @@
       <!-- include: partials/nav-header.html -->
 
       <main class="page">
+        <div class="scroll-sentinel" aria-hidden="true"></div>
         <!-- include: partials/view-dashboard.html -->
         <!-- include: partials/view-course-detail.html -->
         <!-- include: partials/view-module-detail.html -->
@@ -57,6 +58,17 @@
         <!-- include: partials/view-attempt-review.html -->
         <!-- include: partials/view-system.html -->
       </main>
+
+      <button
+        type="button"
+        class="btn back-to-top"
+        @click="scrollToTop()"
+        aria-label="Kembali ke atas halaman"
+        title="Kembali ke atas"
+      >
+        <span aria-hidden="true">↑</span>
+        <span>Ke atas</span>
+      </button>
 
       <!-- include: partials/dialogs.html -->
     </div>

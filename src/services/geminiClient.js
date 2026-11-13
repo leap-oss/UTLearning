@@ -157,7 +157,7 @@ export function buildThinkingConfig(modelName, levelInput) {
     }
   }
 
-  if (model.includes('gemini-3')) {
+  if (model.includes('gemini-3') || model.includes('gemini-4')) {
     const levelMap = {
       minimal: 'MINIMAL',
       low: 'LOW',
@@ -250,7 +250,7 @@ export function cleanAndParseJson(rawText) {
 export async function countTokensSelectively({ model, contents }) {
   const ai = getGeminiClient();
   const config = getEnvConfig();
-  const targetModel = model || config.geminiModel || 'gemini-3.5-flash';
+  const targetModel = model || config.geminiModel || 'gemini-4-hydrogen';
   const result = await ai.models.countTokens({
     model: targetModel,
     contents,
@@ -269,7 +269,7 @@ export async function generateStructuredContent({
   model: modelOverride = null,
 }) {
   const envConfig = getEnvConfig();
-  const model = modelOverride || envConfig.geminiModel || 'gemini-3.5-flash';
+  const model = modelOverride || envConfig.geminiModel || 'gemini-4-hydrogen';
   const maxOutputTokens = getMaxOutputTokensForTask(taskType);
   const effectiveThinkingLevel = thinkingLevel || envConfig.geminiThinkingLevel;
   const thinkingConfig = buildThinkingConfig(model, effectiveThinkingLevel);

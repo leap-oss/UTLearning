@@ -561,7 +561,12 @@
 
             <template x-if="activeStudyPack.summaryJson?.glossary?.length > 0">
               <section id="glossary" class="stack-md">
-                <h3 class="section-title">Istilah penting</h3>
+                <div class="split split--center">
+                  <h3 class="section-title">Istilah penting</h3>
+                  <button type="button" class="btn btn--sm btn--ghost" @click="scrollToTop()">
+                    ↑ Ke atas
+                  </button>
+                </div>
                 <dl class="glossary">
                   <template x-for="(g, gIdx) in activeStudyPack.summaryJson.glossary" :key="gIdx">
                     <div>
@@ -575,6 +580,11 @@
                     </div>
                   </template>
                 </dl>
+                <div>
+                  <button type="button" class="btn btn--sm" @click="scrollToTop()">
+                    ↑ Kembali ke atas modul
+                  </button>
+                </div>
               </section>
             </template>
           </article>

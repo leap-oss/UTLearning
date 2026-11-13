@@ -133,6 +133,7 @@ window.AppModules.state = {
     this.$watch('showCourseModal', (open) => open && this.focusFirstField('#course-code-input'));
     this.$watch('showModuleModal', (open) => open && this.focusFirstField('#module-num-input'));
     this.$watch('confirmDialog.open', (open) => open && this.focusFirstField('#confirm-cancel-btn'));
+    this.setupScrollTopObserver?.();
     await this.loadCourses();
     this.refreshSystemStatus(this.currentView === 'system');
   },

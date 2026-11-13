@@ -114,7 +114,7 @@ export async function enqueueSourceExtraction({
   }
 
   const config = getEnvConfig();
-  const model = config.geminiModel || 'gemini-3.5-flash';
+  const model = config.geminiModel || 'gemini-4-hydrogen';
 
   const inputSignature = preparedFiles.map((f) => ({
     checksum: f.checksum,

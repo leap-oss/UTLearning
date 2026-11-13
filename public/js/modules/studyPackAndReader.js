@@ -30,22 +30,44 @@ window.AppModules.studyPackAndReader = {
   },
 
   get detectedModuleKbCount() {
-    const packKbs =
-      this.activeStudyPack?.summaryJson?.coverageReport?.totalKbsDetected ||
-      this.activeStudyPack?.summaryJson?.topics?.length;
-    if (packKbs && packKbs >= 1) return packKbs;
-
+    // 1. Prioritaskan deteksi KB langsung dari halaman sumber (Rangkuman / Tes Formatif / KB eksplisit)
+    // agar penambahan halaman 'materi' tambahan tidak ikut menggelembungkan jumlah KB
     const sources = this.activeModule?.sources || [];
-    if (sources.length === 0) return 1;
-    const kbNums = new Set();
-    for (const s of sources) {
-      const text = `${s.extractedContentJson?.extractedText || ''} ${s.extractedContentJson?.pageTitle || ''}`;
-      const kbMatch = text.match(/(?:kegiatan\s*belajar|kb|tes\s*formatif|formatif)\s*([0-9]+)/i);
-      if (kbMatch) kbNums.add(Number.parseInt(kbMatch[1], 10));
+    if (sources.length > 0) {
+      const kbNums = new Set();
+      for (const s of sources) {
+        const text = `${s.extractedContentJson?.extractedText || ''} ${s.extractedContentJson?.pageTitle || ''}`;
+        const re = /\b(?:kegiatan\s*belajar|kb|tes\s*formatif|formatif)\s*([1-9])\b/gi;
+        let m;
+        while ((m = re.exec(text)) !== null) {
+          kbNums.add(Number.parseInt(m[1], 10));
+        }
+      }
+      if (kbNums.size >= 1) return kbNums.size;
+      const formatifCount = sources.filter((s) => s.label === 'tes_formatif').length;
+      if (formatifCount >= 1) return formatifCount;
     }
-    if (kbNums.size >= 1) return kbNums.size;
-    const formatifCount = sources.filter((s) => s.label === 'tes_formatif').length;
-    return Math.max(1, formatifCount);
+
+    // 2. Fallback ke coverageReport.totalKbsDetected atau label KB unik pada topics Study Pack
+    const reportKbs = this.activeStudyPack?.summaryJson?.coverageReport?.totalKbsDetected;
+    if (reportKbs && reportKbs >= 1) return reportKbs;
+
+    const topics = this.activeStudyPack?.summaryJson?.topics || [];
+    if (topics.length > 0) {
+      const topicKbNums = new Set();
+      for (const t of topics) {
+        const label = `${t?.topicLabel || ''} ${t?.title || ''}`;
+        const re = /\b(?:kegiatan\s*belajar|kb)\s*([1-9])\b/gi;
+        let m;
+        while ((m = re.exec(label)) !== null) {
+          topicKbNums.add(Number.parseInt(m[1], 10));
+        }
+      }
+      if (topicKbNums.size >= 1) return topicKbNums.size;
+      return Math.min(3, topics.length);
+    }
+
+    return 1;
   },
 
   get moduleFixedQuestionCount() {
@@ -161,6 +183,32 @@ window.AppModules.studyPackAndReader = {
     if (sections.length > 0 && !this.activeTopicId) {
       this.activeTopicId = sections[0].id;
     }
+  },
+
+  scrollToTop() {
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+    const firstTopic = document.querySelector('.reader section.topic');
+    if (firstTopic?.id) {
+      this.activeTopicId = firstTopic.id;
+    }
+  },
+
+  setupScrollTopObserver() {
+    if (this._scrollTopObserverAttached || typeof IntersectionObserver === 'undefined') return;
+    this._scrollTopObserverAttached = true;
+    const sentinel = document.querySelector('.scroll-sentinel');
+    if (!sentinel) return;
+
+    const observer = new IntersectionObserver((entries) => {
+      for (const entry of entries) {
+        if (!entry.isIntersecting) {
+          document.documentElement.classList.add('scrolled');
+        } else {
+          document.documentElement.classList.remove('scrolled');
+        }
+      }
+    });
+    observer.observe(sentinel);
   },
 
   scrollToTopic(topicId, event) {

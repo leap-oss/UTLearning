@@ -1,3 +1,31 @@
+function extractExplicitKbNumbers(text = '') {
+  const nums = new Set();
+  const re = /\b(?:kegiatan\s*belajar|kb|tes\s*formatif|formatif)\s*([1-9]\d?)\b/gi;
+  let match;
+  while ((match = re.exec(text)) !== null) {
+    const n = Number.parseInt(match[1], 10);
+    if (n >= 1 && n <= 9) {
+      nums.add(n);
+    }
+  }
+  return Array.from(nums).sort((a, b) => a - b);
+}
+
+export function countDistinctKbsInTopics(topics = []) {
+  if (!Array.isArray(topics) || topics.length === 0) return 0;
+  const kbNums = new Set();
+  for (const t of topics) {
+    const label = `${t?.topicLabel || ''} ${t?.title || ''}`;
+    for (const n of extractExplicitKbNumbers(label)) {
+      kbNums.add(n);
+    }
+  }
+  if (kbNums.size >= 1) {
+    return kbNums.size;
+  }
+  return Math.min(3, topics.length);
+}
+
 export function detectModuleKbStructure(reviewedSources = []) {
   if (!Array.isArray(reviewedSources) || reviewedSources.length === 0) {
     return [];
@@ -11,10 +39,19 @@ export function detectModuleKbStructure(reviewedSources = []) {
       ' ' +
       (s.extractedContentJson?.pageTitle || '')
     ).toLowerCase();
-    const tfMatch = text.match(/(?:tes\s*formatif|formatif)\s*([0-9]+)/i);
-    const kbMatch = text.match(/(?:kegiatan\s*belajar|kb)\s*([0-9]+)/i);
-    const tfNum = tfMatch ? Number.parseInt(tfMatch[1], 10) : null;
-    const kbNum = kbMatch ? Number.parseInt(kbMatch[1], 10) : null;
+    const tfMatches = [];
+    const tfRe = /\b(?:tes\s*formatif|formatif)\s*([1-9])\b/gi;
+    let m;
+    while ((m = tfRe.exec(text)) !== null) {
+      tfMatches.push(Number.parseInt(m[1], 10));
+    }
+    const kbMatches = [];
+    const kbRe = /\b(?:kegiatan\s*belajar|kb)\s*([1-9])\b/gi;
+    while ((m = kbRe.exec(text)) !== null) {
+      kbMatches.push(Number.parseInt(m[1], 10));
+    }
+    const tfNum = tfMatches.length > 0 ? tfMatches[0] : null;
+    const kbNum = kbMatches.length > 0 ? kbMatches[0] : null;
     const isSummary = s.label === 'rangkuman' || /rangkuman/i.test(text);
     const isFormatif = s.label === 'tes_formatif' || /tes\s*formatif/i.test(text);
 
@@ -25,6 +62,7 @@ export function detectModuleKbStructure(reviewedSources = []) {
       label: s.label,
       tfNum,
       kbNum,
+      allKbNums: Array.from(new Set([...kbMatches, ...tfMatches])),
       isSummary,
       isFormatif,
       textLength: (s.extractedContentJson?.extractedText || '').length,
@@ -33,8 +71,7 @@ export function detectModuleKbStructure(reviewedSources = []) {
 
   const detectedKbNums = new Set();
   classifiedPages.forEach((p) => {
-    if (p.kbNum) detectedKbNums.add(p.kbNum);
-    if (p.tfNum) detectedKbNums.add(p.tfNum);
+    p.allKbNums.forEach((n) => detectedKbNums.add(n));
   });
 
   if (detectedKbNums.size <= 1) {
@@ -55,21 +92,27 @@ export function detectModuleKbStructure(reviewedSources = []) {
     ];
   }
 
+  const maxDetectedKb = Math.max(...Array.from(detectedKbNums));
   let currentKb = 1;
   const pageToKb = new Array(classifiedPages.length);
 
   for (let i = 0; i < classifiedPages.length; i++) {
     const p = classifiedPages[i];
-    if (p.kbNum && p.kbNum > currentKb) {
+    if (p.kbNum && p.kbNum >= currentKb && p.kbNum <= maxDetectedKb) {
       currentKb = p.kbNum;
     } else if (i > 0) {
       const prev = classifiedPages[i - 1];
       const prevWasFormatif = prev.isFormatif || prev.tfNum !== null;
-      if (prevWasFormatif && (p.isSummary || p.label === 'rangkuman' || p.label === 'konsep_inti')) {
+      // Hanya naikkan nomor KB setelah halaman Tes Formatif jika ini halaman Rangkuman baru (bukan sekadar halaman 'materi' tambahan)
+      if (
+        prevWasFormatif &&
+        (p.isSummary || p.label === 'rangkuman') &&
+        currentKb < maxDetectedKb
+      ) {
         currentKb += 1;
       }
     }
-    if (p.tfNum && p.tfNum > currentKb) {
+    if (p.tfNum && p.tfNum >= currentKb && p.tfNum <= maxDetectedKb) {
       currentKb = p.tfNum;
     }
     pageToKb[i] = currentKb;
@@ -423,11 +466,12 @@ PRINSIP WAJIB:
 4. PEMISAHAN KONTEN OTENTIK BMP VS BANTUAN AI:
    - "bmpSummary", "detailedExplanation", "coreConcepts", "comparisons", "processesOrStages", "formulasOrProcedures": Berisi sintesis lengkap dari halaman Rangkuman DAN hasil bedah konsep seluruh butir soal Tes Formatif BMP. Pertahankan istilah dan notasi asli BMP.
    - "aiExplanation", "simpleAnalogy", "examples" (dengan isAiGenerated=true): Berisi analogi bahasa manusiawi, intuisi visual/logika, dan contoh penyelesaian tambahan untuk mempermudah pemahaman mahasiswa.
-5. STRUKTUR MATERI PER TOPIK (PISAHKAN PER KEGIATAN BELAJAR):
-   - "topicLabel": Judul Kegiatan Belajar yang jelas (misal: "Kegiatan Belajar 1: ...").
-   - "learningObjectives": 3-5 sasaran pembelajaran spesifik yang merangkum Rangkuman & Tes Formatif KB tersebut.
-   - "coreConcepts": Seluruh konsep/definisi/sifat kunci dari Rangkuman & seluruh nomor Tes Formatif.
-   - "detailedExplanation": Uraian penjelasan mendalam (4-6 paragraf terstruktur yang mencakup semua konsep & rumus di Rangkuman + semua materi yang ditanyakan pada setiap nomor soal Tes Formatif).
+5. STRUKTUR MATERI PER TOPIK (SATU OBJEK TOPIK PER KEGIATAN BELAJAR):
+   - WAJIB menggabungkan seluruh halaman Rangkuman, Tes Formatif, dan halaman Materi Tambahan yang berada pada Kegiatan Belajar yang sama ke dalam SATU objek topik utuh untuk Kegiatan Belajar tersebut (misal jika batch ini berisi KB 1 & KB 2, hasilkan tepat 2 objek di "topics": satu untuk KB 1 dan satu untuk KB 2). JANGAN memecah halaman materi tambahan menjadi objek topik baru di luar jumlah KB!
+   - "topicLabel": Judul Kegiatan Belajar yang jelas dan diawali nomor KB (misal: "Kegiatan Belajar 1: ...").
+   - "learningObjectives": 3-5 sasaran pembelajaran spesifik yang merangkum Rangkuman, Materi, & Tes Formatif KB tersebut.
+   - "coreConcepts": Seluruh konsep/definisi/sifat kunci dari Rangkuman, Materi, & seluruh nomor Tes Formatif.
+   - "detailedExplanation": Uraian penjelasan mendalam (4-6 paragraf terstruktur yang mencakup semua konsep & rumus di Rangkuman/Materi + semua materi yang ditanyakan pada setiap nomor soal Tes Formatif).
    - "conceptRelationships": Keterhubungan atau ketergantungan antar konsep/teorema.
    - "comparisons": Perbandingan terstruktur (itemA, itemB, distinction) untuk istilah/notasi/rumus yang berpotensi tertukar.
    - "processesOrStages": Alur langkah penyelesaian soal, pembuktian, atau tahapan prosedural.

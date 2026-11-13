@@ -108,7 +108,7 @@ export async function autoMapModulesFromImages({ courseId, files = [] }) {
     });
     await recordAiUsageEvent({
       courseId,
-      model: aiResult?.model || 'gemini-3.5-flash',
+      model: aiResult?.model || 'gemini-4-hydrogen',
       taskType: 'extract_toc_modules',
       status: 'succeeded',
       httpStatus: 200,
@@ -118,7 +118,7 @@ export async function autoMapModulesFromImages({ courseId, files = [] }) {
   } catch (aiErr) {
     await recordAiUsageEvent({
       courseId,
-      model: 'gemini-3.5-flash',
+      model: 'gemini-4-hydrogen',
       taskType: 'extract_toc_modules',
       status: 'failed',
       httpStatus: Number(aiErr?.status || aiErr?.statusCode) || 500,

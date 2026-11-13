@@ -15,6 +15,7 @@ export {
 
 export {
   detectModuleKbStructure,
+  countDistinctKbsInTopics,
   resolveFixedQuestionCountByKb,
   planKbBatches,
   validateStudyPackCoverage,

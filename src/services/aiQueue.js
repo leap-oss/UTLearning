@@ -179,7 +179,7 @@ export class AiJobQueue {
       operation,
       courseId,
       moduleId,
-      model: model || config.geminiModel || 'gemini-3.5-flash',
+      model: model || config.geminiModel || 'gemini-4-hydrogen',
       maxAttempts,
       executeFn,
       cleanupFn,

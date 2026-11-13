@@ -82,7 +82,7 @@ export function getEnvConfig() {
     directUrlConfigured: Boolean(rawDirectUrl),
     geminiApiKeyConfigured: apiKeys.length > 0,
     geminiApiKeyCount: apiKeys.length,
-    geminiModel: (process.env.GEMINI_MODEL || '').trim() || null,
+    geminiModel: (process.env.GEMINI_MODEL || '').trim() || 'gemini-4-hydrogen',
     geminiThinkingLevel: (process.env.GEMINI_THINKING_LEVEL || 'low').trim(),
     aiMaxConcurrentJobs: parsePositiveInt(process.env.AI_MAX_CONCURRENT_JOBS, 1),
     aiMaxQueuedJobs: parsePositiveInt(process.env.AI_MAX_QUEUED_JOBS, 3),
