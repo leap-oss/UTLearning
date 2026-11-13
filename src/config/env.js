@@ -93,7 +93,7 @@ export function getEnvConfig() {
     aiMaxImagesPerBatch: parsePositiveInt(process.env.AI_MAX_IMAGES_PER_BATCH, 8),
     aiMaxImageBytes: parsePositiveInt(process.env.AI_MAX_IMAGE_BYTES, 8_000_000),
     aiMaxBatchBytes: parsePositiveInt(process.env.AI_MAX_BATCH_BYTES, 25_000_000),
-    aiMaxOutputTokensExtraction: parsePositiveInt(process.env.AI_MAX_OUTPUT_TOKENS_EXTRACTION, 16000),
+    aiMaxOutputTokensExtraction: parsePositiveInt(process.env.AI_MAX_OUTPUT_TOKENS_EXTRACTION, 32000),
     aiMaxOutputTokensStudyPack: parsePositiveInt(process.env.AI_MAX_OUTPUT_TOKENS_STUDY_PACK, 32000),
     aiMaxOutputTokensRemedial: parsePositiveInt(process.env.AI_MAX_OUTPUT_TOKENS_REMEDIAL, 8000),
     aiMaxOutputTokensExam: parsePositiveInt(process.env.AI_MAX_OUTPUT_TOKENS_EXAM, 12000),

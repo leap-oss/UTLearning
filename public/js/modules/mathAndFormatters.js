@@ -126,9 +126,9 @@ window.AppModules.mathAndFormatters = {
       .replace(/'/g, '&#39;');
   },
 
-  renderMath(input) {
-    if (input == null || input === '') return '';
-    const raw = String(input);
+  renderInlineMathSegment(rawSegment) {
+    if (rawSegment == null || rawSegment === '') return '';
+    const raw = String(rawSegment);
     const tokenRegex = /(\$\$[\s\S]+?\$\$|\\\[[\s\S]+?\\\]|\$(?!\$)(?:\\.|[^$\\\n])+\$|\\\([\s\S]+?\\\))/g;
     let result = '';
     let lastIndex = 0;
@@ -176,6 +176,168 @@ window.AppModules.mathAndFormatters = {
     }
 
     return result;
+  },
+
+  splitTableCells(rowText) {
+    let trimmed = String(rowText || '').trim();
+    if (trimmed.startsWith('|')) trimmed = trimmed.slice(1);
+    if (trimmed.endsWith('|')) trimmed = trimmed.slice(0, -1);
+
+    const cells = [];
+    let current = '';
+    let inMath = false;
+
+    for (let i = 0; i < trimmed.length; i++) {
+      const ch = trimmed[i];
+      if (ch === '$' && trimmed[i - 1] !== '\\') {
+        inMath = !inMath;
+        current += ch;
+      } else if (ch === '|' && !inMath) {
+        cells.push(current.trim());
+        current = '';
+      } else {
+        current += ch;
+      }
+    }
+    cells.push(current.trim());
+    return cells;
+  },
+
+  isTableRowLine(line) {
+    const t = String(line || '').trim();
+    if (!t) return false;
+    // Standard markdown table row: | col1 | col2 |
+    if (t.startsWith('|') && t.endsWith('|') && t.length > 2) return true;
+    // Numbered pipe row (e.g. "1. $(a, b)$ | $\{x \mid a < x < b\}$") with pipe outside $...$
+    const cells = this.splitTableCells(t);
+    return cells.length >= 2 && (/^\d+[.)]\s+/.test(t) || cells.length >= 3);
+  },
+
+  isTableDividerLine(line) {
+    const cells = this.splitTableCells(line);
+    return cells.length >= 2 && cells.every((c) => /^:?-{2,}:?$/.test(c));
+  },
+
+  buildHtmlTable(tableLines) {
+    if (!tableLines || tableLines.length === 0) return '';
+    const rows = [];
+    let headerCells = null;
+
+    if (tableLines.length >= 2 && this.isTableDividerLine(tableLines[1])) {
+      headerCells = this.splitTableCells(tableLines[0]);
+      for (let i = 2; i < tableLines.length; i++) {
+        if (!this.isTableDividerLine(tableLines[i])) {
+          rows.push(this.splitTableCells(tableLines[i]));
+        }
+      }
+    } else {
+      for (const line of tableLines) {
+        if (!this.isTableDividerLine(line)) {
+          rows.push(this.splitTableCells(line));
+        }
+      }
+    }
+
+    // If numbered pipe rows like "1. $(a, b)$ | $\{x \mid ...\}$" have no explicit header, split "1." into its own column
+    if (
+      !headerCells &&
+      rows.length >= 2 &&
+      rows.every((r) => r.length === 2 && /^\d+[.)]\s+/.test(r[0]))
+    ) {
+      headerCells = ['No.', 'Selang / Notasi', 'Himpunan / Keterangan'];
+      for (let i = 0; i < rows.length; i++) {
+        const m = rows[i][0].match(/^(\d+[.)])\s+([\s\S]+)$/);
+        if (m) {
+          rows[i] = [m[1], m[2], rows[i][1]];
+        }
+      }
+    }
+
+    const colCount = Math.max(
+      headerCells ? headerCells.length : 0,
+      ...rows.map((r) => r.length)
+    );
+
+    let html = '<div class="math-table-wrap"><table class="math-table">';
+    if (headerCells) {
+      html += '<thead><tr>';
+      for (let c = 0; c < colCount; c++) {
+        html += `<th scope="col">${this.renderInlineMathSegment(headerCells[c] || '')}</th>`;
+      }
+      html += '</tr></thead>';
+    }
+    html += '<tbody>';
+    for (const r of rows) {
+      html += '<tr>';
+      for (let c = 0; c < colCount; c++) {
+        html += `<td>${this.renderInlineMathSegment(r[c] || '')}</td>`;
+      }
+      html += '</tr>';
+    }
+    html += '</tbody></table></div>';
+    return html;
+  },
+
+  normalizeCollapsedMathLayout(rawText) {
+    let s = String(rawText || '');
+    // Normalize inline numbered pipe lists (e.g. "... : 1. $(a,b)$ | $\{...\}$ 2. $(a,b]$ | $\{...\}$ ...") into separate lines
+    if (/\d+\.\s*[^|\n]+\|\s*\$/.test(s)) {
+      s = s.replace(/([^\n])\s+(\d+\.\s*(?:\(|\[|\$))/g, '$1\n$2');
+    }
+    // Put headings like "Rangkuman", "Himpunan Bilangan Kompleks", "Bentuk 1:", "Bentuk 2:", "Operasi Bilangan Kompleks" on new lines if collapsed
+    s = s
+      .replace(/([^\n])\s+((?:Bentuk\s+[12]|Operasi\s+Bilangan\s+Kompleks|Hierarki\s+Himpunan\s+Bilangan|Petunjuk\s+Jawaban\s+Latihan|Rangkuman|Tes\s+Formatif\s+\d+)\s*:?)/g, '$1\n\n$2')
+      .replace(/([^\n])\s+(\([a-d]\)\s+\$)/g, '$1\n$2');
+    // Put collapsed "Soal nomor X) s.d. nomor Y)" instructions on their own line
+    s = s.replace(/([^\n])\s+(Soal\s+nomor\s+\d+\)?)/g, '$1\n\n$2');
+    // Put collapsed numbered items "1) ...", "2) ...", ..., "20) ..." on their own line (avoiding "nomor 12)" or "dan 17)")
+    s = s.replace(/(?<!nomor|dan)\s+(\d{1,2}\)\s+(?:[A-Z$(\\]|a\.|b\.|c\.))/g, '\n$1');
+    return s;
+  },
+
+  renderMath(input) {
+    if (input == null || input === '') return '';
+    const normalized = this.normalizeCollapsedMathLayout(String(input));
+    const lines = normalized.split('\n');
+
+    const hasAnyTableLine = lines.some((l) => this.isTableRowLine(l));
+    if (!hasAnyTableLine) {
+      return this.renderInlineMathSegment(normalized);
+    }
+
+    const outputBlocks = [];
+    let textBuffer = [];
+    let tableBuffer = [];
+
+    const flushText = () => {
+      if (textBuffer.length > 0) {
+        outputBlocks.push(this.renderInlineMathSegment(textBuffer.join('\n')));
+        textBuffer = [];
+      }
+    };
+
+    const flushTable = () => {
+      if (tableBuffer.length >= 2) {
+        outputBlocks.push(this.buildHtmlTable(tableBuffer));
+      } else if (tableBuffer.length === 1) {
+        outputBlocks.push(this.renderInlineMathSegment(tableBuffer[0]));
+      }
+      tableBuffer = [];
+    };
+
+    for (const line of lines) {
+      if (this.isTableRowLine(line) || (tableBuffer.length > 0 && this.isTableDividerLine(line))) {
+        flushText();
+        tableBuffer.push(line);
+      } else {
+        flushTable();
+        textBuffer.push(line);
+      }
+    }
+    flushTable();
+    flushText();
+
+    return outputBlocks.join('\n');
   },
 
   renderFormula(input) {

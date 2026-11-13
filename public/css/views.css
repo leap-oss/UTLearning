@@ -564,3 +564,53 @@ label.checklist-item { cursor: pointer; }
   line-height: 1.65;
   overflow-x: auto;
 }
+
+/* Rendered Markdown & Math Tables */
+.math-table-wrap {
+  margin: var(--space-sm) 0;
+  overflow-x: auto;
+  border: var(--rule-hair) solid var(--color-rule-2);
+  border-radius: var(--radius-sm);
+  background: var(--color-paper-2);
+}
+
+.math-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-family: var(--font-body);
+  font-size: var(--text-sm);
+  line-height: 1.55;
+  color: var(--color-ink);
+  white-space: normal;
+}
+
+.math-table th,
+.math-table td {
+  padding: var(--space-xs) var(--space-md);
+  border-bottom: var(--rule-hair) solid var(--color-rule);
+  border-right: var(--rule-hair) solid var(--color-rule);
+  text-align: left;
+  vertical-align: middle;
+}
+
+.math-table th:last-child,
+.math-table td:last-child {
+  border-right: 0;
+}
+
+.math-table tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+.math-table thead th {
+  background: var(--color-paper-3);
+  color: var(--color-ink);
+  font-weight: 500;
+  font-size: var(--text-xs);
+  letter-spacing: 0.02em;
+  border-bottom: var(--rule-hair) solid var(--color-rule-2);
+}
+
+.math-table tbody tr:nth-child(even) {
+  background: color-mix(in oklab, var(--color-paper-3) 45%, transparent);
+}
