@@ -31,12 +31,12 @@ export {
 
 export function normalizeExtractedText(rawText) {
   if (typeof rawText !== 'string') return '';
-  const text = rawText.replace(/\r\n/g, '\n');
+  let text = rawText.replace(/\r\n/g, '\n');
 
-  // Preserve fenced code blocks (e.g. ```flowchart ... ```) and $$...$$ math blocks verbatim
+  // Preserve flowchart/mermaid blocks and $$...$$ math blocks verbatim
   const preserved = [];
-  const withTokens = text.replace(
-    /```[\s\S]*?```|\$\$[\s\S]*?\$\$/g,
+  text = text.replace(
+    /```(?:flowchart|mermaid)\s*\n[\s\S]*?```|\$\$[\s\S]*?\$\$/gi,
     (match) => {
       const idx = preserved.length;
       preserved.push(match);
@@ -44,7 +44,20 @@ export function normalizeExtractedText(rawText) {
     }
   );
 
-  const lines = withTokens.split('\n');
+  // Convert non-flowchart fenced code blocks (```java ... ``` or ``` ... ```) into cleanly separated indented lines without raw ``` fences
+  text = text.replace(
+    /```(?:[a-zA-Z0-9_+-]*)?[ \t]*\n([\s\S]*?)```/g,
+    (_match, codeBody) => {
+      const indented = String(codeBody || '')
+        .trim()
+        .split('\n')
+        .map((l) => (l.trim() ? `  ${l.replace(/[ \t]+$/g, '')}` : ''))
+        .join('\n');
+      return `\n\n${indented}\n\n`;
+    }
+  );
+
+  const lines = text.split('\n');
   const normalizedLines = [];
 
   for (let line of lines) {
@@ -55,6 +68,16 @@ export function normalizeExtractedText(rawText) {
       normalizedLines.push(line);
       continue;
     }
+
+    // Strip leading Markdown heading hashes (e.g. "### Tes Formatif 1" -> "Tes Formatif 1")
+    line = line.replace(/^\s*#{1,6}\s+/, '');
+
+    // Strip bold **...** and italic *...* around words/phrases (preserving (*) and a * b)
+    line = line.replace(/\*\*([^*\n]+)\*\*/g, '$1');
+    line = line.replace(/(?<![*\w])\*([A-Za-z0-9_][^*\n]*?[A-Za-z0-9_])\*(?![*\w])/g, '$1');
+
+    // Strip inline code backticks `...`
+    line = line.replace(/`([^`\n]+)`/g, '$1');
 
     // Split glued question numbers like "D. Pilihan empat 2) Soal berikutnya" or "...jawaban. 2) Soal"
     line = line.replace(/([^\s(])\s+(\d{1,2}\))\s+/g, '$1\n\n$2 ');
@@ -73,15 +96,18 @@ export function normalizeExtractedText(rawText) {
 
     for (const subLine of line.split('\n')) {
       const trimmedEnd = subLine.replace(/[ \t]+$/g, '');
+      const prevLine = normalizedLines.length > 0 ? normalizedLines[normalizedLines.length - 1] : '';
+
       // Ensure a blank line before a new question number (e.g. "2) ..." or "2. ...")
       if (
         /^\s*\d{1,2}[).]\s+\S/.test(trimmedEnd) &&
         normalizedLines.length > 0 &&
-        normalizedLines[normalizedLines.length - 1] !== '' &&
-        !/^\s*[-*#]/.test(normalizedLines[normalizedLines.length - 1])
+        prevLine !== '' &&
+        !/^\s*[-*]/.test(prevLine)
       ) {
         normalizedLines.push('');
       }
+
       normalizedLines.push(trimmedEnd);
     }
   }
@@ -97,11 +123,13 @@ export async function defaultGeminiExtractionCall({ moduleRecord, sourceRecordsW
   const systemInstruction = `Anda adalah asisten ekstraksi dokumen akademik & rumus matematika (OCR presisi tinggi) untuk Buku Materi Pokok (BMP) Universitas Terbuka.
 Tugas Anda:
 1. Baca setiap gambar halaman BMP secara teliti sesuai urutan dan sourceImageId yang diberikan.
-2. EKSTRAKSI RAPI, TERSTRUKTUR & MUDAH DIBACA (PARAFRASE RINGAN UNTUK KERAPIAN PROSA DIPERBOLEHKAN):
+2. EKSTRAKSI RAPI, BERSIH TANPA SIMBOL MARKDOWN LIAR, & MUDAH DIBACA:
+   - **DILARANG menggunakan simbol pagar (\`#\`, \`##\`, \`###\`), bintang miring/tebal (\`*kata*\`, \`**kata**\`), atau backtick (\`\` \`kode\` \`\`, \`\`\` \`\`\` \`\`\`)** di dalam "extractedText" (kecuali blok \`\`\`flowchart ... \`\`\` untuk diagram alir). Tuliskan istilah asing seperti operand, unary, script, while, true, false sebagai teks biasa tanpa tanda bintang!
    - **Materi & Rangkuman**: Rapikan teks hasil bacaan agar nyaman dipelajari! Gabungkan baris kalimat yang terpotong karena tata letak kolom buku (termasuk kata yang terpenggal tanda hubung seperti "algo- ritma" menjadi "algoritma"), hapus header/footer nomor halaman cetak yang mengganggu (misalnya "1.12", "MODUL 1"), dan **boleh memparafrasekan secara ringan** kalimat yang kaku/berantakan akibat pemindaian agar mengalir jelas—**TANPA mengubah makna, fakta, definisi istilah, rumus, ataupun menghilangkan informasi penting**.
-   - **Struktur Paragraf & Poin**: Gunakan heading/subjudul yang jelas, daftar poin (\`- \`), dan **pisahkan setiap paragraf dengan satu baris kosong (\`\\n\\n\`)**.
+   - **Struktur Paragraf & Poin**: Gunakan judul baris biasa (tanpa \`#\`), daftar poin (\`- \`), dan **pisahkan setiap paragraf dengan satu baris kosong (\`\\n\\n\`)**.
    - **Soal Latihan & Tes Formatif (WAJIB TERPISAH RAPI)**:
-     * Pertahankan teks soal dan opsi jawaban tetap akurat sesuai BMP.
+     * Pertahankan teks soal, potongan kode program, dan opsi jawaban tetap akurat sesuai BMP.
+     * Jika soal memuat potongan kode program, pisahkan potongan kode tersebut dengan baris kosong sebelum dan sesudahnya (tanpa \`\`\`).
      * **WAJIB beri satu baris kosong (\`\\n\\n\`) sebelum setiap nomor soal** (\`1)\`, \`2)\`, dst.) agar nomor soal TIDAK PERNAH menempel di akhir jawaban soal sebelumnya!
      * **WAJIB tulis setiap pilihan jawaban (\`A.\`, \`B.\`, \`C.\`, \`D.\`) di baris baru (\`\\n\`) masing-masing**, jangan pernah menggabungkan opsi A/B/C/D dalam satu baris.
    - JANGAN menyalin ulang kalimat yang sama ke dalam array "sections" untuk menghemat kuota token output (cukup isi "sections": [] dan tulis seluruh teks yang sudah rapi di "extractedText").
@@ -251,7 +279,7 @@ export async function enqueueSourceExtraction({
     targetId: moduleId,
     inputChecksum: computeSha256(inputSignature),
     model,
-    promptVersion: 'extract-v4',
+    promptVersion: 'extract-v5',
     schemaVersion: 1,
   });
 

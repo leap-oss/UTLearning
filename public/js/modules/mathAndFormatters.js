@@ -110,6 +110,19 @@ window.AppModules.mathAndFormatters = {
       .replace(/'/g, '&#39;');
   },
 
+  formatPlainTextSegment(str) {
+    let escaped = this.escapeHtml(str);
+    // Strip markdown heading hashes (#, ##, ###) and render heading text bold
+    escaped = escaped.replace(/^[ \t]*#{1,6}[ \t]+(.+)$/gm, '<strong>$1</strong>');
+    // Inline code `...`
+    escaped = escaped.replace(/`([^`\n]+)`/g, '<code class="inline-code">$1</code>');
+    // Bold **...**
+    escaped = escaped.replace(/\*\*([^*\n]+)\*\*/g, '<strong>$1</strong>');
+    // Italic *word* (avoiding multiplication like a * b or (*))
+    escaped = escaped.replace(/(?<![*\w])\*([A-Za-z0-9_][^*\n]*?[A-Za-z0-9_])\*(?![*\w])/g, '<em>$1</em>');
+    return escaped;
+  },
+
   renderInlineMathSegment(rawSegment) {
     if (rawSegment == null || rawSegment === '') return '';
     const raw = String(rawSegment);
@@ -120,7 +133,7 @@ window.AppModules.mathAndFormatters = {
 
     while ((match = tokenRegex.exec(raw)) !== null) {
       if (match.index > lastIndex) {
-        result += this.escapeHtml(raw.slice(lastIndex, match.index));
+        result += this.formatPlainTextSegment(raw.slice(lastIndex, match.index));
       }
       const token = match[0];
       let displayMode = false;
@@ -156,7 +169,7 @@ window.AppModules.mathAndFormatters = {
     }
 
     if (lastIndex < raw.length) {
-      result += this.escapeHtml(raw.slice(lastIndex));
+      result += this.formatPlainTextSegment(raw.slice(lastIndex));
     }
 
     return result;
@@ -283,23 +296,23 @@ window.AppModules.mathAndFormatters = {
     const token = String(rawToken || '').trim();
     if (!token) return null;
 
-    let id = token;
+    let id = '';
     let shape = 'rect';
     let label = token;
     let explicitShape = false;
 
     let m;
-    if ((m = token.match(/^([A-Za-z0-9_]+)\(\[([\s\S]*?)\]\)$/))) {
+    if ((m = token.match(/^([A-Za-z0-9_]*)\(\[([\s\S]*?)\]\)$/))) {
       id = m[1]; shape = 'terminator'; label = m[2].trim(); explicitShape = true;
-    } else if ((m = token.match(/^([A-Za-z0-9_]+)\(\(([\s\S]*?)\)\)$/))) {
+    } else if ((m = token.match(/^([A-Za-z0-9_]*)\(\(([\s\S]*?)\)\)$/))) {
       id = m[1]; shape = 'terminator'; label = m[2].trim(); explicitShape = true;
-    } else if ((m = token.match(/^([A-Za-z0-9_]+)\(\s*([\s\S]*?)\s*\)$/))) {
+    } else if ((m = token.match(/^([A-Za-z0-9_]*)\(\s*([\s\S]*?)\s*\)$/))) {
       id = m[1]; shape = 'terminator'; label = m[2].trim(); explicitShape = true;
-    } else if ((m = token.match(/^([A-Za-z0-9_]+)\[\/([\s\S]*?)\/\]$/))) {
+    } else if ((m = token.match(/^([A-Za-z0-9_]*)\[\/([\s\S]*?)\/\]$/))) {
       id = m[1]; shape = 'io'; label = m[2].trim(); explicitShape = true;
-    } else if ((m = token.match(/^([A-Za-z0-9_]+)\{([\s\S]*?)\}$/))) {
+    } else if ((m = token.match(/^([A-Za-z0-9_]*)\{([\s\S]*?)\}$/))) {
       id = m[1]; shape = 'decision'; label = m[2].trim(); explicitShape = true;
-    } else if ((m = token.match(/^([A-Za-z0-9_]+)\[([\s\S]*?)\]$/))) {
+    } else if ((m = token.match(/^([A-Za-z0-9_]*)\[([\s\S]*?)\]$/))) {
       id = m[1];
       const inner = m[2].trim();
       if (inner === '.') {
@@ -307,6 +320,13 @@ window.AppModules.mathAndFormatters = {
       } else {
         shape = 'rect'; label = inner; explicitShape = true;
       }
+    } else {
+      id = token;
+    }
+
+    if (!id) {
+      const slug = label.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '');
+      id = slug ? `anon_${shape}_${slug}` : `anon_${shape}_${nodeMap.size + 1}`;
     }
 
     if (!nodeMap.has(id)) {
@@ -320,7 +340,13 @@ window.AppModules.mathAndFormatters = {
   },
 
   renderFlowchartSvg(blockText) {
-    const lines = String(blockText || '')
+    // Join continuation lines that begin with an arrow (e.g. "\n--> [Proses]") onto the previous line
+    const joinedText = String(blockText || '')
+      .replace(/\r\n/g, '\n')
+      .replace(/--(?!>)\s*([^-\n|>[\]{}()]+?)\s*-->/g, '-->|$1|')
+      .replace(/\n\s*(-->(?:\|[^|]*\|)?|---)/g, ' $1');
+
+    const lines = joinedText
       .split('\n')
       .map((l) => l.trim())
       .filter((l) => l && !l.startsWith('%%'));
@@ -422,10 +448,10 @@ window.AppModules.mathAndFormatters = {
 
     const isLR = direction === 'LR';
     const hasLabels = nodes.some((n) => n.label.length > 0);
-    const cellW = hasLabels ? 176 : 86;
-    const cellH = hasLabels ? 86 : 64;
-    const padX = 24;
-    const padY = 20;
+    const cellW = hasLabels ? 228 : 92;
+    const cellH = hasLabels ? 96 : 68;
+    const padX = 48;
+    const padY = 24;
 
     let maxLayer = 0;
     let maxLane = 0;
@@ -440,8 +466,26 @@ window.AppModules.mathAndFormatters = {
       const cx = padX + (isLR ? layer : lane) * cellW + cellW / 2;
       const cy = padY + (isLR ? lane : layer) * cellH + cellH / 2;
       const textLen = n.label.length;
-      const w = n.shape === 'port' ? 6 : n.label ? Math.min(164, Math.max(88, textLen * 7.2 + 28)) : (n.shape === 'decision' ? 44 : 58);
-      const h = n.shape === 'port' ? 6 : n.shape === 'decision' ? (n.label ? 50 : 38) : (n.label ? 38 : 28);
+      const w =
+        n.shape === 'port'
+          ? 6
+          : n.shape === 'decision'
+            ? n.label
+              ? Math.min(216, Math.max(124, textLen * 7.6 + 52))
+              : 48
+            : n.label
+              ? Math.min(198, Math.max(96, textLen * 7.2 + 28))
+              : 58;
+      const h =
+        n.shape === 'port'
+          ? 6
+          : n.shape === 'decision'
+            ? n.label
+              ? 60
+              : 40
+            : n.label
+              ? 38
+              : 28;
       pos.set(n.id, { cx, cy, w, h, node: n });
     }
 
@@ -460,30 +504,47 @@ window.AppModules.mathAndFormatters = {
 
       const dx = b.cx - a.cx;
       const dy = b.cy - a.cy;
-      let x1 = a.cx;
-      let y1 = a.cy;
-      let x2 = b.cx;
-      let y2 = b.cy;
 
-      if (Math.abs(dy) >= Math.abs(dx)) {
-        const s = dy >= 0 ? 1 : -1;
-        y1 = a.cy + s * (a.h / 2);
-        y2 = b.cy - s * (b.h / 2 + 2);
+      let pathD = '';
+      let lx = (a.cx + b.cx) / 2;
+      let ly = (a.cy + b.cy) / 2 - 6;
+
+      // Loop-back edge on the same column in TD mode: route around the left side of the column
+      if (!isLR && dy < -4 && Math.abs(dx) < 8) {
+        const xStart = a.cx - a.w / 2;
+        const yStart = a.cy;
+        const xEnd = b.cx - b.w / 2 - 2;
+        const yEnd = b.cy;
+        const loopX = Math.max(12, Math.min(xStart, xEnd) - 28);
+        pathD = `M ${xStart} ${yStart} L ${loopX} ${yStart} L ${loopX} ${yEnd} L ${xEnd} ${yEnd}`;
+        lx = loopX - 4;
+        ly = (yStart + yEnd) / 2;
       } else {
-        const s = dx >= 0 ? 1 : -1;
-        x1 = a.cx + s * (a.w / 2);
-        x2 = b.cx - s * (b.w / 2 + 2);
-      }
+        let x1 = a.cx;
+        let y1 = a.cy;
+        let x2 = b.cx;
+        let y2 = b.cy;
 
-      const pathD =
-        Math.abs(x1 - x2) < 2 || Math.abs(y1 - y2) < 2
-          ? `M ${x1} ${y1} L ${x2} ${y2}`
-          : `M ${x1} ${y1} L ${x2} ${y1} L ${x2} ${y2}`;
+        if (Math.abs(dy) >= Math.abs(dx)) {
+          const s = dy >= 0 ? 1 : -1;
+          y1 = a.cy + s * (a.h / 2);
+          y2 = b.cy - s * (b.h / 2 + 2);
+        } else {
+          const s = dx >= 0 ? 1 : -1;
+          x1 = a.cx + s * (a.w / 2);
+          x2 = b.cx - s * (b.w / 2 + 2);
+        }
+
+        pathD =
+          Math.abs(x1 - x2) < 2 || Math.abs(y1 - y2) < 2
+            ? `M ${x1} ${y1} L ${x2} ${y2}`
+            : `M ${x1} ${y1} L ${x2} ${y1} L ${x2} ${y2}`;
+        lx = (x1 + x2) / 2;
+        ly = (y1 + y2) / 2 - (Math.abs(y1 - y2) < 4 ? 7 : 3);
+      }
 
       svg += `<path d="${pathD}" class="fc-edge" marker-end="url(#${markerId})" />`;
       if (e.label) {
-        const lx = (x1 + x2) / 2;
-        const ly = (y1 + y2) / 2 - 4;
         svg += `<text x="${lx}" y="${ly}" class="fc-edge-label" text-anchor="middle">${this.escapeHtml(e.label)}</text>`;
       }
     }
@@ -509,7 +570,7 @@ window.AppModules.mathAndFormatters = {
       }
 
       if (node.label) {
-        const shortLabel = node.label.length > 26 ? `${node.label.slice(0, 24)}…` : node.label;
+        const shortLabel = node.label.length > 32 ? `${node.label.slice(0, 30)}…` : node.label;
         svg += `<text x="${cx}" y="${cy + 4}" class="fc-label" text-anchor="middle">${this.escapeHtml(shortLabel)}</text>`;
       }
     }
@@ -521,12 +582,23 @@ window.AppModules.mathAndFormatters = {
   renderMath(input) {
     if (input == null || input === '') return '';
     const flowchartBlocks = [];
-    const withPlaceholders = String(input).replace(
+    const codeBlocks = [];
+
+    let withPlaceholders = String(input).replace(
       /```(?:flowchart|mermaid)\s*\n([\s\S]*?)```/gi,
       (_match, body) => {
         const idx = flowchartBlocks.length;
         flowchartBlocks.push(this.renderFlowchartSvg(body));
         return `\n@@FLOWCHART_${idx}@@\n`;
+      }
+    );
+
+    withPlaceholders = withPlaceholders.replace(
+      /```(?:[a-zA-Z0-9_+-]*)?[ \t]*\n([\s\S]*?)```/g,
+      (_match, codeBody) => {
+        const idx = codeBlocks.length;
+        codeBlocks.push(`<pre class="code-snippet"><code>${this.escapeHtml(codeBody.trim())}</code></pre>`);
+        return `\n@@CODEBLOCK_${idx}@@\n`;
       }
     );
 
@@ -573,6 +645,9 @@ window.AppModules.mathAndFormatters = {
       rendered = outputBlocks.join('\n');
     }
 
+    if (codeBlocks.length > 0) {
+      rendered = rendered.replace(/\n?@@CODEBLOCK_(\d+)@@\n?/g, (_m, idx) => codeBlocks[Number(idx)] || '');
+    }
     if (flowchartBlocks.length > 0) {
       rendered = rendered.replace(/@@FLOWCHART_(\d+)@@/g, (_m, idx) => flowchartBlocks[Number(idx)] || '');
     }

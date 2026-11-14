@@ -605,7 +605,11 @@ export function validateAndAlignStudyPack(parsed, reviewedSources = []) {
           matchedTopic.learningObjectives.push(q.learningObjective);
         }
 
-        if (!isCovered && q.explanation) {
+        if (
+          !isCovered &&
+          q.explanation &&
+          !matchedTopic.detailedExplanation.includes(q.explanation)
+        ) {
           matchedTopic.detailedExplanation += `\n\n${q.explanation}`;
           matchedTopic.bmpSummary = matchedTopic.detailedExplanation;
         }

@@ -481,6 +481,27 @@ label.checklist-item { cursor: pointer; }
   color: var(--color-ink);
 }
 
+.code-snippet {
+  margin: var(--space-xs) 0;
+  padding: var(--space-xs) var(--space-sm);
+  border: var(--rule-hair) solid var(--color-rule-2);
+  border-radius: var(--radius-sm);
+  background: var(--color-paper-3);
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  line-height: 1.55;
+  white-space: pre-wrap;
+  overflow-x: auto;
+}
+
+.inline-code {
+  padding: 0.1rem 0.35rem;
+  border-radius: var(--radius-xs, 4px);
+  background: var(--color-paper-3);
+  font-family: var(--font-mono);
+  font-size: 0.9em;
+}
+
 .math-toolbar {
   display: flex;
   flex-direction: column;
