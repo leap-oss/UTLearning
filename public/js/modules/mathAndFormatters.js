@@ -276,7 +276,12 @@ window.AppModules.mathAndFormatters = {
   },
 
   normalizeCollapsedMathLayout(rawText) {
-    let s = String(rawText || '');
+    let s = String(rawText || '')
+      // Repair corrupted LaTeX escapes where \n, \f, \b, \t inside JSON became control characters
+      .replace(/\r?\n(eg|eq|otin|abla)(?=$|[^a-zA-Z])/g, '\\n$1')
+      .replace(/\x0c(rac|orall)(?=$|[^a-zA-Z])/g, '\\f$1')
+      .replace(/\x08(inom|egin|eta|ar|igcup|igcap)(?=$|[^a-zA-Z])/g, '\\b$1')
+      .replace(/\t(imes|heta|au|ext|frac|o)(?=$|[^a-zA-Z])/g, '\\t$1');
     // Normalize inline numbered pipe lists (e.g. "... : 1. $(a,b)$ | $\{...\}$ 2. $(a,b]$ | $\{...\}$ ...") into separate lines
     if (/\d+\.\s*[^|\n]+\|\s*\$/.test(s)) {
       s = s.replace(/([^\n])\s+(\d+\.\s*(?:\(|\[|\$))/g, '$1\n$2');

@@ -219,9 +219,12 @@ window.AppModules.sourcesAndExtraction = {
           method: 'DELETE',
           headers: { Accept: 'application/json' },
         });
-        const data = await res.json();
-        if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok && res.status !== 404) {
           throw new Error(data.message || 'Gagal menghapus sumber.');
+        }
+        if (this.activeModule && Array.isArray(this.activeModule.sources)) {
+          this.activeModule.sources = this.activeModule.sources.filter((s) => s.id !== source.id);
         }
         await this.openModule(this.activeModule.id, 'sources');
         this.showNotice(`${pageLabel} berhasil dihapus.`);

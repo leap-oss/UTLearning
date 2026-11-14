@@ -1,13 +1,22 @@
 <!-- ==================== VIEW 5: RESULTS & REVIEW ==================== -->
 <section x-show="currentView === 'attempt_review' && activeAttemptReview" class="view" data-view="attempt_review">
   <div class="quiz">
-    <div>
+    <div class="split split--center">
       <button
         type="button"
         @click="returnFromQuizOrReview()"
         class="btn btn--ghost btn--sm"
         x-text="activeAttemptReview?.moduleId ? 'Selesai & kembali ke modul' : 'Selesai & kembali ke mata kuliah'"
       ></button>
+      <template x-if="activeAttemptReview?.questionSetId">
+        <button
+          type="button"
+          @click="startQuiz(activeAttemptReview.questionSetId)"
+          class="btn btn--sm"
+        >
+          Ulangi kuis ini
+        </button>
+      </template>
     </div>
 
     <header class="stack-lg">
@@ -76,7 +85,7 @@
           <div class="cluster">
             <span class="code" x-text="`Soal ${rIdx + 1}`"></span>
             <span :class="rq.isCorrect ? 'state state--ok' : 'state state--bad'" x-text="rq.isCorrect ? 'Benar' : 'Kurang tepat'"></span>
-            <span class="meta" x-text="rq.topicLabel"></span>
+            <span class="meta" x-html="renderMath(rq.topicLabel)"></span>
             <template x-if="rq.difficulty">
               <span class="tag" x-text="difficultyLabel(rq.difficulty)"></span>
             </template>

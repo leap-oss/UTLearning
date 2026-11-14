@@ -21,8 +21,8 @@ const __dirname = path.dirname(__filename);
 const publicDir = path.resolve(__dirname, '../public');
 
 const uuidParamSchema = z.string().uuid();
-const CACHE_TTL_MS = 15_000;
-const CACHEABLE_API_RE = /^\/api\/(courses|modules|ai\/usage\/summary)(\/|$|\?)/;
+const CACHE_TTL_MS = 5_000;
+const CACHEABLE_API_RE = /^\/api\/(ai\/usage\/summary)(\/|$|\?)/;
 
 export function createApp({
   aiQueue = defaultAiQueue,
@@ -71,6 +71,7 @@ export function createApp({
     };
 
     const method = req.method.toUpperCase();
+    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
     if (method !== 'GET' && method !== 'HEAD') {
       bumpDbMutationVersion();
       responseCache.clear();

@@ -223,6 +223,14 @@ export function cleanAndParseJson(rawText) {
     cleaned = cleaned.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '').trim();
   }
 
+  // Protect single-backslash LaTeX commands that collide with JSON escape sequences (\n, \t, \f, \b, \r)
+  cleaned = cleaned.replace(
+    /(?<!\\)\\(neg|neq|notin|ni(?![a-zA-Z])|nabla|natural|times|theta|tau|tan(?![a-zA-Z])|text|tfrac|triangle|therefore|to(?![a-zA-Z])|top(?![a-zA-Z])|frac|forall|binom|begin|beta|bar(?![a-zA-Z])|bigcup|bigcap|big(?![a-zA-Z])|bot(?![a-zA-Z])|bullet|rightarrow|leftrightarrow|right|rangle|rceil|rfloor|rho)/g,
+    '\\\\$1'
+  );
+  // Protect any other single-backslash LaTeX commands (\cup, \cap, \in, \subset, \land, \lor, \Rightarrow, \sqrt, \{, \}, etc.) that are invalid JSON escapes
+  cleaned = cleaned.replace(/(?<!\\)\\(?![/\\"bfnrt]|u[0-9a-fA-F]{4})/g, '\\\\');
+
   try {
     return JSON.parse(cleaned);
   } catch (firstErr) {
@@ -351,16 +359,45 @@ export async function generateStructuredContent({
         errMsg.includes('resource_exhausted') ||
         errMsg.includes('rate_limit') ||
         errMsg.includes('rate limit');
+      const isAuthOrKeyError =
+        status === 401 ||
+        status === 403 ||
+        errMsg.includes('api_key_invalid') ||
+        errMsg.includes('permission_denied') ||
+        errMsg.includes('api key not valid');
 
-      if (isQuotaOrRateLimit && keys.length > 1 && attempt < maxAttempts - 1) {
+      if ((isQuotaOrRateLimit || isAuthOrKeyError) && keys.length > 1 && attempt < maxAttempts - 1) {
         const isDaily =
           errMsg.includes('per day') || errMsg.includes('daily') || errMsg.includes('rpd');
-        const cooldownMs = isDaily ? 60 * 60 * 1000 : 30 * 1000;
+        const cooldownMs = isAuthOrKeyError || isDaily ? 60 * 60 * 1000 : 30 * 1000;
+        const reason = isAuthOrKeyError
+          ? 'key tidak valid / 403'
+          : isDaily
+            ? 'kuota harian habis (RPD)'
+            : 'rate limit sementara (RPM)';
         console.warn(
-          `[geminiClient] API Key #${keyInfo.index + 1}/${keyInfo.total} (${maskApiKey(keyInfo.key)}) terkena ${isDaily ? 'kuota harian habis (RPD)' : 'rate limit sementara (RPM)'}. Beralih otomatis ke API key #${((keyInfo.index + 1) % keyInfo.total) + 1}...`
+          `[geminiClient] API Key #${keyInfo.index + 1}/${keyInfo.total} (${maskApiKey(keyInfo.key)}) terkena ${reason}. Beralih otomatis ke API key #${((keyInfo.index + 1) % keyInfo.total) + 1}...`
         );
         pool.markCooldown(keyInfo.key, cooldownMs);
         continue;
+      }
+
+      // If all keys exhausted quota on gemini-3-flash-preview, fallback to gemini-2.5-flash (separate RPD bucket per key)
+      if (isQuotaOrRateLimit && !modelOverride && model !== 'gemini-2.5-flash') {
+        console.warn(
+          `[geminiClient] Seluruh API key kehabisan kuota pada model ${model}. Beralih otomatis ke model cadangan gemini-2.5-flash...`
+        );
+        pool.cooldowns.clear();
+        return generateStructuredContent({
+          taskType,
+          contents,
+          systemInstruction,
+          responseSchema,
+          zodSchema,
+          thinkingLevel,
+          enableGoogleSearch,
+          model: 'gemini-2.5-flash',
+        });
       }
 
       throw apiErr;

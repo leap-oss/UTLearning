@@ -3,9 +3,10 @@ window.AppModules = window.AppModules || {};
 window.AppModules.apiAndJobs = {
   async fetchJson(url, options = {}, retryCount = 1) {
     const method = (options.method || 'GET').toUpperCase();
+    const fetchOpts = { cache: 'no-store', ...options };
     for (let attempt = 0; attempt <= retryCount; attempt += 1) {
       try {
-        const res = await fetch(url, options);
+        const res = await fetch(url, fetchOpts);
         const rawText = await res.text();
         let data = {};
         if (rawText && rawText.trim().length > 0) {

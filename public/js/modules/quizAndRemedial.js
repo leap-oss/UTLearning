@@ -184,6 +184,7 @@ window.AppModules.quizAndRemedial = {
         throw new Error(data.message || 'Gagal mengirim jawaban kuis.');
       }
 
+      this.activeQuestionSet = null;
       this.activeAttemptReview = data.attempt;
       this.currentView = 'attempt_review';
       this.showNotice(`Kuis selesai dinilai di server! Skor Anda: ${data.attempt.score}%`);

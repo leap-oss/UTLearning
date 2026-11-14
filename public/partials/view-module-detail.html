@@ -682,7 +682,7 @@
       <div class="ledger" x-show="(moduleProgress?.topicProgress?.length || 0) > 0">
         <template x-for="tp in moduleProgress?.topicProgress || []" :key="tp.topicLabel">
           <div class="ledger-row topic-progress-row">
-            <span class="sub-title" style="font-weight: 400" x-text="tp.topicLabel"></span>
+            <span class="sub-title" style="font-weight: 400" x-html="renderMath(tp.topicLabel)"></span>
             <div class="meter meter--thin" role="img" :aria-label="`Akurasi ${tp.accuracyPercent}%`">
               <div
                 :class="tp.accuracyPercent >= 75 ? 'meter-seg meter-seg--mastered' : 'meter-seg meter-seg--review'"
@@ -714,7 +714,12 @@
               <span class="figure" x-text="`${att.score}%`"></span>
               <span class="meta figure" x-text="`${att.correctCount}/${att.totalCount}`"></span>
             </span>
-            <button type="button" @click="openAttemptReview(att.id)" class="btn btn--ghost btn--sm">Pembahasan</button>
+            <div class="cluster cluster--tight">
+              <template x-if="att.questionSetId">
+                <button type="button" @click="startQuiz(att.questionSetId)" class="btn btn--ghost btn--sm">Ulangi</button>
+              </template>
+              <button type="button" @click="openAttemptReview(att.id)" class="btn btn--ghost btn--sm">Pembahasan</button>
+            </div>
           </div>
         </template>
       </div>

@@ -125,7 +125,7 @@
           <article class="question" :id="`question-card-${q.id}`">
             <div class="cluster">
               <span class="code" x-text="`Soal ${quizPageStartIndex + qIdx + 1}`"></span>
-              <span class="meta" x-text="q.topicLabel"></span>
+              <span class="meta" x-html="renderMath(q.topicLabel)"></span>
               <template x-if="q.difficulty">
                 <span class="tag" x-text="difficultyLabel(q.difficulty)"></span>
               </template>
