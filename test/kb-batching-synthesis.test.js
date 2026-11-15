@@ -627,3 +627,62 @@ test('5-API Key Pool + 4-Tier Model Failover Cascade: gemini-4-hydrogen -> gemin
     defaultApiKeyPool.reset();
   }
 });
+
+test('Math Layout Preservation: interval math like (-infty, 0) cup (0, infty) and blank lines between questions are never split/collapsed', async () => {
+  const { normalizeExtractedText } = await import('../src/services/extractionService.js');
+
+  const rawExtracted = [
+    '7) $(f \\circ g)(x) = \\dots$.',
+    'A. $\\frac{2 - x}{x + 1}$',
+    'B. $\\frac{1}{x}$',
+    '',
+    '8) $D(g \\circ f) = \\dots$.',
+    'A. $(-\\infty, 0) \\cup (0, \\infty)$',
+    'B. $(-\\infty, -1) \\cup (-1, \\infty)$',
+    '',
+    '9) $D(f \\circ g) = \\dots$.',
+    'A. $(-\\infty, 0) \\cup (0, \\infty)$',
+    'B. $[0, 1) \\cup (1, 2]$',
+  ].join('\n');
+
+  const normalizedServer = normalizeExtractedText(rawExtracted);
+  assert.ok(
+    normalizedServer.includes('A. $(-\\infty, 0) \\cup (0, \\infty)$'),
+    'Server normalizeExtractedText must NOT split $( -\\infty, 0) \\cup (0, \\infty )$ across lines'
+  );
+  assert.ok(
+    normalizedServer.includes('B. $[0, 1) \\cup (1, 2]$'),
+    'Server normalizeExtractedText must NOT split $[0, 1)$ across lines'
+  );
+  assert.ok(
+    normalizedServer.includes('B. $\\frac{1}{x}$\n\n8) $D(g \\circ f)'),
+    'Blank line between question 7 and 8 must be preserved'
+  );
+
+  // Also test frontend normalizeCollapsedMathLayout directly
+  const mathModuleCode = fs.readFileSync(
+    path.join(projectRoot, 'public/js/modules/mathAndFormatters.js'),
+    'utf8'
+  );
+  const fakeWindow = { AppModules: {} };
+  new Function('window', mathModuleCode)(fakeWindow);
+  const formatter = fakeWindow.AppModules.mathAndFormatters;
+
+  const formatted = formatter.normalizeCollapsedMathLayout(normalizedServer);
+  assert.ok(
+    formatted.includes('A. $(-\\infty, 0) \\cup (0, \\infty)$'),
+    'Frontend normalizeCollapsedMathLayout must NOT split $( -\\infty, 0) \\cup (0, \\infty )$ across lines'
+  );
+  assert.ok(
+    formatted.includes('B. $\\frac{1}{x}$\n\n8) $D(g \\circ f)'),
+    'Frontend normalizeCollapsedMathLayout must preserve blank line before 8)'
+  );
+
+  // Also test healing already-saved broken intervals from older extractions
+  const legacyBroken = '9) $D(f \\circ g) = \\dots$.\nA. $(-\\infty,\n\n0) \\cup (0, \\infty)$\nB. $(-\\infty, -1) \\cup (-1, \\infty)$';
+  const healed = formatter.normalizeCollapsedMathLayout(legacyBroken);
+  assert.ok(
+    healed.includes('A. $(-\\infty, 0) \\cup (0, \\infty)$'),
+    'Frontend must heal legacy split interval math back onto one line so KaTeX renders it'
+  );
+});

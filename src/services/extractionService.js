@@ -46,10 +46,10 @@ export function normalizeExtractedText(rawText) {
   if (typeof rawText !== 'string') return '';
   let text = repairCorruptedLatexEscapes(rawText).replace(/\r\n/g, '\n');
 
-  // Preserve flowchart/mermaid blocks and $$...$$ math blocks verbatim
+  // Preserve flowchart/mermaid blocks, $$...$$ display math, and $...$ inline math verbatim
   const preserved = [];
   text = text.replace(
-    /```(?:flowchart|mermaid)\s*\n[\s\S]*?```|\$\$[\s\S]*?\$\$/gi,
+    /```(?:flowchart|mermaid)\s*\n[\s\S]*?```|\$\$[\s\S]*?\$\$|\$(?!\$)(?:\\.|[^$\\\n])+\$/gi,
     (match) => {
       const idx = preserved.length;
       preserved.push(match);
@@ -93,7 +93,7 @@ export function normalizeExtractedText(rawText) {
     line = line.replace(/`([^`\n]+)`/g, '$1');
 
     // Split glued question numbers like "D. Pilihan empat 2) Soal berikutnya" or "...jawaban. 2) Soal"
-    line = line.replace(/([^\s(])\s+(\d{1,2}\))\s+/g, '$1\n\n$2 ');
+    line = line.replace(/([^\s,(])[ \t]+([1-9]\d?\))[ \t]+/g, '$1\n\n$2 ');
 
     // Split glued "A. ..." after question punctuation (?, :, ), or . on a numbered question line)
     if (/^\s*\d{1,2}[).]\s+/.test(line)) {

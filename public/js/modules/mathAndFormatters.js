@@ -282,18 +282,37 @@ window.AppModules.mathAndFormatters = {
       .replace(/\x0c(rac|orall)(?=$|[^a-zA-Z])/g, '\\f$1')
       .replace(/\x08(inom|egin|eta|ar|igcup|igcap)(?=$|[^a-zA-Z])/g, '\\b$1')
       .replace(/\t(imes|heta|au|ext|frac|o)(?=$|[^a-zA-Z])/g, '\\t$1');
+
+    // Heal math intervals previously split right before "0)" or "N)" (e.g. "$(-\infty,\n\n0) \cup ...$")
+    s = s.replace(/(\$\s*[\(\[][^$\n]*,)[ \t]*\n+(\d{1,2}\)[ \t]*[^$\n]*\$)/g, '$1 $2');
+
+    // Protect $$...$$ and $...$ math blocks so layout regexes never split inside math expressions
+    const protectedMath = [];
+    s = s.replace(
+      /\$\$[\s\S]+?\$\$|\\\[[\s\S]+?\\\]|\$(?!\$)(?:\\.|[^$\\\n])+\$|\\\([\s\S]+?\\\)/g,
+      (match) => {
+        const idx = protectedMath.length;
+        protectedMath.push(match);
+        return `@@MATH_TOKEN_${idx}@@`;
+      }
+    );
+
     // Normalize inline numbered pipe lists (e.g. "... : 1. $(a,b)$ | $\{...\}$ 2. $(a,b]$ | $\{...\}$ ...") into separate lines
-    if (/\d+\.\s*[^|\n]+\|\s*\$/.test(s)) {
-      s = s.replace(/([^\n])\s+(\d+\.\s*(?:\(|\[|\$))/g, '$1\n$2');
+    if (/\d+\.[ \t]*[^|\n]+\|[ \t]*(?:\$|@@MATH_TOKEN_)/.test(s)) {
+      s = s.replace(/([^\n])[ \t]+(\d+\.[ \t]*(?:\(|\[|\$|@@MATH_TOKEN_))/g, '$1\n$2');
     }
     // Put headings like "Rangkuman", "Himpunan Bilangan Kompleks", "Bentuk 1:", "Bentuk 2:", "Operasi Bilangan Kompleks" on new lines if collapsed
     s = s
-      .replace(/([^\n])\s+((?:Bentuk\s+[12]|Operasi\s+Bilangan\s+Kompleks|Hierarki\s+Himpunan\s+Bilangan|Petunjuk\s+Jawaban\s+Latihan|Rangkuman|Tes\s+Formatif\s+\d+)\s*:?)/g, '$1\n\n$2')
-      .replace(/([^\n])\s+(\([a-d]\)\s+\$)/g, '$1\n$2');
+      .replace(/([^\n])[ \t]+((?:Bentuk\s+[12]|Operasi\s+Bilangan\s+Kompleks|Hierarki\s+Himpunan\s+Bilangan|Petunjuk\s+Jawaban\s+Latihan|Rangkuman|Tes\s+Formatif\s+\d+)\s*:?)/g, '$1\n\n$2')
+      .replace(/([^\n])[ \t]+(\([a-d]\)[ \t]+(?:\$|@@MATH_TOKEN_))/g, '$1\n$2');
     // Put collapsed "Soal nomor X) s.d. nomor Y)" instructions on their own line
-    s = s.replace(/([^\n])\s+(Soal\s+nomor\s+\d+\)?)/g, '$1\n\n$2');
-    // Put collapsed numbered items "1) ...", "2) ...", ..., "20) ..." on their own line (avoiding "nomor 12)" or "dan 17)")
-    s = s.replace(/(?<!nomor|dan)\s+(\d{1,2}\)\s+(?:[A-Z$(\\]|a\.|b\.|c\.))/g, '\n$1');
+    s = s.replace(/([^\n])[ \t]+(Soal\s+nomor\s+\d+\)?)/g, '$1\n\n$2');
+    // Put collapsed numbered items "1) ...", "2) ...", ..., "20) ..." on their own line (only horizontal spaces, never eating blank lines)
+    s = s.replace(/([^\n])(?<!nomor|dan)[ \t]+([1-9]\d?\)[ \t]+(?:[A-Z$(\\]|@@MATH_TOKEN_|a\.|b\.|c\.))/g, '$1\n\n$2');
+
+    if (protectedMath.length > 0) {
+      s = s.replace(/@@MATH_TOKEN_(\d+)@@/g, (_m, idx) => protectedMath[Number(idx)] || '');
+    }
     return s;
   },
 
