@@ -2,7 +2,10 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { renderModularJs } from '../src/services/htmlRenderer.js';
+
+const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 import {
   detectModuleKbStructure,
   countDistinctKbsInTopics,
@@ -136,31 +139,29 @@ test('Batch Planning: 2 KB melebihi batas token aman otomatis dipisah 2 batch', 
   assert.equal(batches[1].isFinalBatch, true);
 });
 
-test('Batch Planning: 3 KB default 2 batch (Batch 1: KB 1 & 2, Batch 2: KB 3)', () => {
+test('Batch Planning: 3 KB default 1 batch (hemat RPD — seluruh KB disintesis dalam 1 request)', () => {
   const kbs = [
     { kbNumber: 1, totalChars: 8000, sources: [] },
     { kbNumber: 2, totalChars: 8000, sources: [] },
     { kbNumber: 3, totalChars: 8000, sources: [] },
   ];
-  const batches = planKbBatches(kbs, { maxSafeCharsPerBatch: 35000 });
-  assert.equal(batches.length, 2);
-  assert.deepEqual(batches[0].kbs.map((k) => k.kbNumber), [1, 2]);
-  assert.equal(batches[0].isFinalBatch, false);
-  assert.deepEqual(batches[1].kbs.map((k) => k.kbNumber), [3]);
-  assert.equal(batches[1].isFinalBatch, true);
+  const batches = planKbBatches(kbs);
+  assert.equal(batches.length, 1);
+  assert.deepEqual(batches[0].kbs.map((k) => k.kbNumber), [1, 2, 3]);
+  assert.equal(batches[0].isFinalBatch, true);
 });
 
-test('Batch Planning: 4 KB didistribusikan seimbang ke 2 batch', () => {
+test('Batch Planning: 4 KB ukuran normal digabung ke 1 batch tunggal (hemat RPD)', () => {
   const kbs = [
     { kbNumber: 1, totalChars: 6000, sources: [] },
     { kbNumber: 2, totalChars: 6000, sources: [] },
     { kbNumber: 3, totalChars: 6000, sources: [] },
     { kbNumber: 4, totalChars: 6000, sources: [] },
   ];
-  const batches = planKbBatches(kbs, { maxSafeCharsPerBatch: 35000 });
-  assert.equal(batches.length, 2);
-  assert.deepEqual(batches[0].kbs.map((k) => k.kbNumber), [1, 2]);
-  assert.deepEqual(batches[1].kbs.map((k) => k.kbNumber), [3, 4]);
+  const batches = planKbBatches(kbs);
+  assert.equal(batches.length, 1);
+  assert.deepEqual(batches[0].kbs.map((k) => k.kbNumber), [1, 2, 3, 4]);
+  assert.equal(batches[0].isFinalBatch, true);
 });
 
 test('Coverage Validation: Mendeteksi kelengkapan KB, halaman terpetakan, dan soal formatif', () => {
@@ -245,8 +246,8 @@ test('Coverage Validation: Menandai jika ada halaman sumber atau KB yang belum t
 });
 
 test('Quiz Runner vs Attempt Review: Sasaran Pembelajaran disembunyikan di Runner dan tampil di Review', () => {
-  const runnerPath = path.join(process.cwd(), 'public/partials/view-quiz-runner.html');
-  const reviewPath = path.join(process.cwd(), 'public/partials/view-attempt-review.html');
+  const runnerPath = path.join(projectRoot, 'public/partials/view-quiz-runner.html');
+  const reviewPath = path.join(projectRoot, 'public/partials/view-attempt-review.html');
 
   const runnerHtml = fs.readFileSync(runnerPath, 'utf8');
   const reviewHtml = fs.readFileSync(reviewPath, 'utf8');
@@ -280,7 +281,8 @@ test('Two-Stage Synthesis Pipeline: Mengintegrasikan batch material KB 1, 2, 3 m
   assert.equal(kbStructure.length, 3);
 
   const batches = planKbBatches(kbStructure);
-  assert.equal(batches.length, 2);
+  assert.equal(batches.length, 1);
+  assert.equal(batches[0].kbs.length, 3);
 
   // Simulasi sintesis batch 1 (KB 1 & 2)
   const batch1Output = {
@@ -401,7 +403,7 @@ test('Fixed Question Count by KB: 1 KB = 10, 2 KB = 20, >= 3 KB = 25, and Runner
   assert.equal(resolveFixedQuestionCountByKb(3), 25);
   assert.equal(resolveFixedQuestionCountByKb(4), 25);
 
-  const runnerPath = path.join(process.cwd(), 'public/partials/view-quiz-runner.html');
+  const runnerPath = path.join(projectRoot, 'public/partials/view-quiz-runner.html');
   const runnerHtml = fs.readFileSync(runnerPath, 'utf8');
   assert.equal(runnerHtml.includes('currentQuizPageQuestions'), true);
   assert.equal(runnerHtml.includes('nextQuizPage()'), true);
@@ -455,7 +457,7 @@ test('Fixed Question Count by KB: 1 KB = 10, 2 KB = 20, >= 3 KB = 25, and Runner
 });
 
 test('Immediate Floating Progress Card: all actions call startAiJobFeedback before fetch so Vercel serverless shows progress immediately', () => {
-  const publicDir = path.join(process.cwd(), 'public');
+  const publicDir = path.join(projectRoot, 'public');
   const appJs = renderModularJs(publicDir);
 
   assert.equal(appJs.includes('startAiJobFeedback('), true);
@@ -491,5 +493,137 @@ test('Immediate Floating Progress Card: all actions call startAiJobFeedback befo
         `Expected ${fnSig} to call startAiJobFeedback before fetch() so progress card renders immediately on Vercel`
       );
     }
+  }
+});
+
+test('RPD Efficiency Architecture: OCR up to 15 images in 1 request, Study Pack + Quiz in 1 request (2 requests/module)', async () => {
+  const { getEnvConfig } = await import('../src/config/env.js');
+  const { buildSystemInstruction } = await import('../src/services/studyPack/kbPlanner.js');
+
+  const config = getEnvConfig();
+  assert.equal(config.aiMaxImagesPerBatch, 15, 'Max images per batch should default to 15');
+  assert.equal(config.aiMaxOutputTokensExtraction, 65536, 'Extraction output token budget should be 65536');
+  assert.equal(config.aiMaxOutputTokensStudyPack, 65536, 'Study Pack output token budget should be 65536');
+
+  // Verify 15 pages across 3 KBs are planned into 1 single batch request
+  const fifteenSources = Array.from({ length: 15 }, (_, idx) => {
+    const pageOrder = idx + 1;
+    const kbNum = Math.min(3, Math.ceil(pageOrder / 5));
+    const isFormatif = pageOrder % 5 === 0;
+    return createMockSource({
+      pageOrder,
+      label: isFormatif ? 'tes_formatif' : 'rangkuman',
+      title: isFormatif ? `Tes Formatif ${kbNum}` : `Rangkuman Kegiatan Belajar ${kbNum}`,
+      text: `${isFormatif ? `Tes Formatif ${kbNum}` : `Kegiatan Belajar ${kbNum}`} — halaman ${pageOrder} berisi materi lengkap.`,
+    });
+  });
+
+  const kbs = detectModuleKbStructure(fifteenSources);
+  assert.equal(kbs.length, 3);
+  const batches = planKbBatches(kbs);
+  assert.equal(batches.length, 1, 'All 3 KBs from 15 pages must be synthesized in 1 single request');
+  assert.equal(batches[0].isFinalBatch, true);
+
+  const sysPrompt = buildSystemInstruction({
+    isFinalBatch: true,
+    totalQuestionCount: 25,
+    kbTitles: 'KB 1, KB 2, KB 3',
+  });
+  assert.ok(sysPrompt.includes('ZERO COMPRESSION'), 'System instruction must enforce zero compression policy');
+  assert.ok(sysPrompt.includes('65.536 token'), 'System instruction must encourage using full token budget');
+});
+
+test('5-API Key Pool + 4-Tier Model Failover Cascade: gemini-4-hydrogen -> gemini-3.6-flash -> gemini-3.8-flash -> gemini-3.5-flash-lite', async () => {
+  const { getEnvConfig, DEFAULT_GEMINI_MODEL_CHAIN } = await import('../src/config/env.js');
+  const { defaultApiKeyPool, generateStructuredContent } = await import('../src/services/geminiClient.js');
+
+  assert.deepEqual(DEFAULT_GEMINI_MODEL_CHAIN, [
+    'gemini-4-hydrogen',
+    'gemini-3.6-flash',
+    'gemini-3.8-flash',
+    'gemini-3.5-flash-lite',
+  ]);
+
+  const snapshot = {};
+  for (const k of Object.keys(process.env)) {
+    if (/gemini/i.test(k)) {
+      snapshot[k] = process.env[k];
+      delete process.env[k];
+    }
+  }
+
+  try {
+    process.env.Gemini_API_1 = 'key-1-alpha1234';
+    process.env.Gemini_API_2 = 'key-2-bravo1234';
+    process.env.Gemini_API_3 = 'key-3-charlie12';
+    process.env.Gemini_API_4 = 'key-4-delta1234';
+    process.env.Gemini_API_5 = 'key-5-echo12345';
+    process.env.GEMINI_MODEL = 'gemini-4-hydrogen';
+
+    defaultApiKeyPool.reset();
+    const keys = defaultApiKeyPool.getKeys();
+    assert.equal(keys.length, 5, 'Should parse all 5 numbered API keys');
+
+    const config = getEnvConfig();
+    assert.deepEqual(config.geminiFallbackModels, [
+      'gemini-4-hydrogen',
+      'gemini-3.6-flash',
+      'gemini-3.8-flash',
+      'gemini-3.5-flash-lite',
+    ]);
+
+    const attemptedCalls = [];
+    // Stub getClientForKey to simulate RPD exhaustion across models until gemini-3.5-flash-lite succeeds on key #1
+    const origGetClient = defaultApiKeyPool.getClientForKey.bind(defaultApiKeyPool);
+    defaultApiKeyPool.getClientForKey = (key) => ({
+      models: {
+        generateContent: async ({ model }) => {
+          attemptedCalls.push({ model, key });
+          if (model !== 'gemini-3.5-flash-lite') {
+            const err = new Error(`Quota exceeded for metric: GenerateRequestsPerDay on ${model}`);
+            err.status = 429;
+            throw err;
+          }
+          return {
+            text: JSON.stringify({ ok: true, modelUsed: model, keyUsed: key }),
+            usageMetadata: { promptTokenCount: 100, candidatesTokenCount: 50, totalTokenCount: 150 },
+          };
+        },
+      },
+    });
+
+    try {
+      const res = await generateStructuredContent({
+        taskType: 'extract_sources',
+        contents: 'Test cascade',
+      });
+
+      assert.equal(res.model, 'gemini-3.5-flash-lite');
+      assert.equal(res.data.ok, true);
+      // 5 keys tried on gemini-4-hydrogen + 5 keys on gemini-3.6-flash + 5 keys on gemini-3.8-flash + 1st key succeeds on gemini-3.5-flash-lite = 16 attempts
+      assert.equal(attemptedCalls.length, 16);
+      assert.deepEqual(
+        attemptedCalls.slice(0, 5).map((c) => c.model),
+        Array(5).fill('gemini-4-hydrogen')
+      );
+      assert.deepEqual(
+        attemptedCalls.slice(5, 10).map((c) => c.model),
+        Array(5).fill('gemini-3.6-flash')
+      );
+      assert.deepEqual(
+        attemptedCalls.slice(10, 15).map((c) => c.model),
+        Array(5).fill('gemini-3.8-flash')
+      );
+      assert.equal(attemptedCalls[15].model, 'gemini-3.5-flash-lite');
+    } finally {
+      defaultApiKeyPool.getClientForKey = origGetClient;
+      defaultApiKeyPool.reset();
+    }
+  } finally {
+    for (const k of Object.keys(process.env)) {
+      if (/gemini/i.test(k)) delete process.env[k];
+    }
+    Object.assign(process.env, snapshot);
+    defaultApiKeyPool.reset();
   }
 });

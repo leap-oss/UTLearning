@@ -166,6 +166,7 @@ export function createApp({
         apiKeyConfigured: config.geminiApiKeyConfigured,
         apiKeyCount: config.geminiApiKeyCount || 0,
         model: config.geminiModel,
+        fallbackModels: config.geminiFallbackModels,
         thinkingLevel: config.geminiThinkingLevel,
         googleSearchEnabled: config.aiEnableGoogleSearch,
         queue: aiQueue.getStats(),

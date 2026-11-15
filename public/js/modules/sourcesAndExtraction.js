@@ -19,8 +19,21 @@ window.AppModules.sourcesAndExtraction = {
     const files = Array.from(event.target.files || []);
     if (files.length === 0) return;
 
+    const MAX_FILES_PER_REQUEST = 15;
+    const remainingSlots = MAX_FILES_PER_REQUEST - this.stagedFiles.length;
+    if (remainingSlots <= 0) {
+      this.showError(`Maksimal ${MAX_FILES_PER_REQUEST} gambar dalam 1 request ekstraksi OCR.`);
+      event.target.value = '';
+      return;
+    }
+
+    const acceptedFiles = files.slice(0, remainingSlots);
+    if (files.length > remainingSlots) {
+      this.showError(`Maksimal ${MAX_FILES_PER_REQUEST} gambar per request ekstraksi. ${files.length - remainingSlots} gambar terakhir tidak dimasukkan.`);
+    }
+
     const existingCount = (this.activeModule?.sources?.length || 0) + this.stagedFiles.length;
-    files.forEach((file, idx) => {
+    acceptedFiles.forEach((file, idx) => {
       const previewUrl = URL.createObjectURL(file);
       this.stagedFiles.push({
         id: `${Date.now()}-${idx}-${Math.random().toString(36).slice(2, 7)}`,

@@ -68,11 +68,32 @@ export function getDirectDatabaseConnectionString() {
   return direct || pooled || '';
 }
 
+export const DEFAULT_GEMINI_MODEL_CHAIN = [
+  'gemini-4-hydrogen',
+  'gemini-3.6-flash',
+  'gemini-3.8-flash',
+  'gemini-3.5-flash-lite',
+];
+
+export function parseFallbackModels(env = process.env) {
+  const raw = (env?.GEMINI_FALLBACK_MODELS || '').trim();
+  const primary = (env?.GEMINI_MODEL || '').trim() || DEFAULT_GEMINI_MODEL_CHAIN[0];
+  const list = raw
+    ? raw
+        .split(/[\n,;]+/)
+        .map((m) => m.trim())
+        .filter(Boolean)
+    : DEFAULT_GEMINI_MODEL_CHAIN;
+  return Array.from(new Set([primary, ...list]));
+}
+
 export function getEnvConfig() {
   const rawDbUrl = (process.env.DATABASE_URL || '').trim();
   const rawDirectUrl = (process.env.DIRECT_URL || '').trim();
   const effectiveDbUrl = rawDbUrl || rawDirectUrl;
   const apiKeys = parseApiKeys(process.env);
+  const geminiModel = (process.env.GEMINI_MODEL || '').trim() || DEFAULT_GEMINI_MODEL_CHAIN[0];
+  const geminiFallbackModels = parseFallbackModels(process.env);
 
   return {
     port: parsePositiveInt(process.env.PORT, 3000),
@@ -82,7 +103,8 @@ export function getEnvConfig() {
     directUrlConfigured: Boolean(rawDirectUrl),
     geminiApiKeyConfigured: apiKeys.length > 0,
     geminiApiKeyCount: apiKeys.length,
-    geminiModel: (process.env.GEMINI_MODEL || '').trim() || 'gemini-4-hydrogen',
+    geminiModel,
+    geminiFallbackModels,
     geminiThinkingLevel: (process.env.GEMINI_THINKING_LEVEL || 'low').trim(),
     aiMaxConcurrentJobs: parsePositiveInt(process.env.AI_MAX_CONCURRENT_JOBS, 1),
     aiMaxQueuedJobs: parsePositiveInt(process.env.AI_MAX_QUEUED_JOBS, 3),
@@ -90,13 +112,13 @@ export function getEnvConfig() {
     aiRetryBaseMs: parsePositiveInt(process.env.AI_RETRY_BASE_MS, 1000),
     aiRetryMaxMs: parsePositiveInt(process.env.AI_RETRY_MAX_MS, 30000),
     aiEnableGoogleSearch: String(process.env.AI_ENABLE_GOOGLE_SEARCH || 'false').toLowerCase() === 'true',
-    aiMaxImagesPerBatch: parsePositiveInt(process.env.AI_MAX_IMAGES_PER_BATCH, 8),
+    aiMaxImagesPerBatch: parsePositiveInt(process.env.AI_MAX_IMAGES_PER_BATCH, 15),
     aiMaxImageBytes: parsePositiveInt(process.env.AI_MAX_IMAGE_BYTES, 8_000_000),
-    aiMaxBatchBytes: parsePositiveInt(process.env.AI_MAX_BATCH_BYTES, 25_000_000),
-    aiMaxOutputTokensExtraction: parsePositiveInt(process.env.AI_MAX_OUTPUT_TOKENS_EXTRACTION, 32000),
-    aiMaxOutputTokensStudyPack: parsePositiveInt(process.env.AI_MAX_OUTPUT_TOKENS_STUDY_PACK, 32000),
-    aiMaxOutputTokensRemedial: parsePositiveInt(process.env.AI_MAX_OUTPUT_TOKENS_REMEDIAL, 8000),
-    aiMaxOutputTokensExam: parsePositiveInt(process.env.AI_MAX_OUTPUT_TOKENS_EXAM, 12000),
+    aiMaxBatchBytes: parsePositiveInt(process.env.AI_MAX_BATCH_BYTES, 50_000_000),
+    aiMaxOutputTokensExtraction: parsePositiveInt(process.env.AI_MAX_OUTPUT_TOKENS_EXTRACTION, 65536),
+    aiMaxOutputTokensStudyPack: parsePositiveInt(process.env.AI_MAX_OUTPUT_TOKENS_STUDY_PACK, 65536),
+    aiMaxOutputTokensRemedial: parsePositiveInt(process.env.AI_MAX_OUTPUT_TOKENS_REMEDIAL, 16000),
+    aiMaxOutputTokensExam: parsePositiveInt(process.env.AI_MAX_OUTPUT_TOKENS_EXAM, 32000),
     aiSoftDailyRequestBudget: parseOptionalPositiveInt(process.env.AI_SOFT_DAILY_REQUEST_BUDGET),
     aiSoftDailyTokenBudget: parseOptionalPositiveInt(process.env.AI_SOFT_DAILY_TOKEN_BUDGET),
   };

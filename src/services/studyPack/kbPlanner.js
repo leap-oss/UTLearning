@@ -165,14 +165,17 @@ export function resolveFixedQuestionCountByKb(kbCount = 1) {
 }
 
 export function planKbBatches(kbStructure = [], options = {}) {
-  const maxSafeCharsPerBatch = options.maxSafeCharsPerBatch || 35000;
   if (!Array.isArray(kbStructure) || kbStructure.length === 0) {
     return [];
   }
 
-  const count = kbStructure.length;
+  // Default: gabungkan seluruh Kegiatan Belajar (KB 1, KB 2, KB 3, dst.) dalam 1 request tunggal
+  // untuk menghemat kuota RPD (hanya 1 request untuk pembuatan seluruh materi + kuis modul)
+  // dengan memanfaatkan kuota 250K TPM dan maxOutputTokens=65536.
+  const maxSafeCharsPerBatch = options.maxSafeCharsPerBatch || 200000;
+  const totalChars = kbStructure.reduce((sum, kb) => sum + (kb.totalChars || 0), 0);
 
-  if (count === 1) {
+  if (totalChars <= maxSafeCharsPerBatch || kbStructure.length === 1) {
     return [
       {
         batchIndex: 1,
@@ -184,83 +187,7 @@ export function planKbBatches(kbStructure = [], options = {}) {
     ];
   }
 
-  if (count === 2) {
-    const totalChars = (kbStructure[0]?.totalChars || 0) + (kbStructure[1]?.totalChars || 0);
-    if (totalChars > maxSafeCharsPerBatch) {
-      return [
-        {
-          batchIndex: 1,
-          totalBatches: 2,
-          kbs: [kbStructure[0]],
-          isFinalBatch: false,
-          splitReason: `Kerapatan materi KB 1 & 2 (${totalChars} karakter) melampaui batas aman (${maxSafeCharsPerBatch}); dipisah agar materi tidak terkompresi.`,
-        },
-        {
-          batchIndex: 2,
-          totalBatches: 2,
-          kbs: [kbStructure[1]],
-          isFinalBatch: true,
-          splitReason: null,
-        },
-      ];
-    }
-    return [
-      {
-        batchIndex: 1,
-        totalBatches: 1,
-        kbs: kbStructure,
-        isFinalBatch: true,
-        splitReason: null,
-      },
-    ];
-  }
-
-  if (count === 3) {
-    const batch1Chars = (kbStructure[0]?.totalChars || 0) + (kbStructure[1]?.totalChars || 0);
-    if (batch1Chars <= maxSafeCharsPerBatch) {
-      return [
-        {
-          batchIndex: 1,
-          totalBatches: 2,
-          kbs: [kbStructure[0], kbStructure[1]],
-          isFinalBatch: false,
-          splitReason: null,
-        },
-        {
-          batchIndex: 2,
-          totalBatches: 2,
-          kbs: [kbStructure[2]],
-          isFinalBatch: true,
-          splitReason: null,
-        },
-      ];
-    }
-    return [
-      {
-        batchIndex: 1,
-        totalBatches: 3,
-        kbs: [kbStructure[0]],
-        isFinalBatch: false,
-        splitReason: `Ukuran KB 1 & 2 (${batch1Chars} karakter) melebihi batas aman; dipartisi terarah.`,
-      },
-      {
-        batchIndex: 2,
-        totalBatches: 3,
-        kbs: [kbStructure[1]],
-        isFinalBatch: false,
-        splitReason: null,
-      },
-      {
-        batchIndex: 3,
-        totalBatches: 3,
-        kbs: [kbStructure[2]],
-        isFinalBatch: true,
-        splitReason: null,
-      },
-    ];
-  }
-
-  const mid = Math.ceil(count / 2);
+  const mid = Math.ceil(kbStructure.length / 2);
   const part1 = kbStructure.slice(0, mid);
   const part2 = kbStructure.slice(mid);
   const part1Chars = part1.reduce((sum, kb) => sum + (kb.totalChars || 0), 0);
@@ -273,7 +200,7 @@ export function planKbBatches(kbStructure = [], options = {}) {
         totalBatches: 2,
         kbs: part1,
         isFinalBatch: false,
-        splitReason: null,
+        splitReason: `Kerapatan materi modul (${totalChars} karakter) melampaui batas aman (${maxSafeCharsPerBatch}); dipisah agar materi tidak terkompresi.`,
       },
       {
         batchIndex: 2,
@@ -290,7 +217,7 @@ export function planKbBatches(kbStructure = [], options = {}) {
     totalBatches: kbStructure.length,
     kbs: [kb],
     isFinalBatch: idx === kbStructure.length - 1,
-    splitReason: `Kerapatan modul (${part1Chars + part2Chars} karakter) melampaui batas aman; dibagi per KB secara independen demi kualitas.`,
+    splitReason: `Kerapatan modul (${totalChars} karakter) melampaui batas aman (${maxSafeCharsPerBatch}); dibagi per KB secara independen demi kualitas.`,
   }));
 }
 
@@ -449,17 +376,20 @@ export function buildSystemInstruction({ isFinalBatch, totalQuestionCount, kbTit
 
   return `Anda adalah kurator dan arsitek penyusun bahan belajar komprehensif Universitas Terbuka (BMP) yang berfokus pada ketuntasan pemahaman mandiri mahasiswa, termasuk untuk mata kuliah eksakta/matematika.
 
-PRINSIP WAJIB:
-1. JANGAN MERINGKAS TERLALU PENDEK: Mahasiswa belajar mandiri menggunakan bahan ini. Setiap topik WAJIB diuraikan secara mendalam dan jelas (minimal 4-5 paragraf naratif yang komprehensif per topik di "detailedExplanation"), bukan sekadar ringkasan permukaan.
+PRINSIP WAJIB (ZERO COMPRESSION & MAKSIMALISASI DETAIL):
+1. DILARANG KERAS MENGOMPRESI ATAU MERINGKAS PENDEK (GUNAKAN KUOTA TOKEN SEMAKSIMAL MUNGKIN):
+   - Anda memiliki kuota token output yang sangat besar (hingga 65.536 token output / 250K TPM) dalam satu request tunggal ini!
+   - JANGAN PERNAH mengompresi, menyingkat, atau memangkas kedalaman penjelasan meskipun modul ini memiliki banyak Kegiatan Belajar (KB 1, KB 2, KB 3, dst.) dalam 1 request sekaligus!
+   - Setiap Kegiatan Belajar WAJIB diuraikan secara sangat mendalam, panjang, komprehensif, dan tuntas (minimal 5-8 paragraf naratif yang kaya dan mendetail per Kegiatan Belajar di "detailedExplanation"), bukan sekadar ringkasan permukaan.
 2. BEDAH TUNTAS & REVERSE-ENGINEERING SELURUH SOAL TES FORMATIF (100% CAKUPAN WAJIB):
    - Mahasiswa sering kali HANYA mengunggah halaman "Rangkuman" dan "Tes Formatif" (tanpa mengunggah puluhan halaman isi bab).
    - Oleh karena itu, banyak konsep, sifat teorema, atau langkah penyelesaian spesifik yang diujikan di soal "Tes Formatif" TIDAK tertulis di halaman "Rangkuman" singkat.
-   - Anda WAJIB membedah SETIAP butir soal yang ada di seluruh halaman Tes Formatif pada KB ini dan mengubahnya menjadi materi pembelajaran utuh di dalam "detailedExplanation", "coreConcepts", "formulasOrProcedures", "comparisons", "examples", "commonMisconceptions", dan "glossary"!
+   - Anda WAJIB membedah SETIAP butir soal yang ada di seluruh halaman Tes Formatif pada seluruh KB ini dan mengubahnya menjadi materi pembelajaran utuh di dalam "detailedExplanation", "coreConcepts", "formulasOrProcedures", "comparisons", "examples", "commonMisconceptions", dan "glossary"!
    - DILARANG MELEWATKAN SATU PUN konsep atau rumus dari nomor soal Tes Formatif yang diunggah.
    - Untuk soal berbentuk pengecualian ("...kecuali..."), uraikan secara eksplisit seluruh sifat/unsur yang benar DAN jelaskan mengapa opsi pengecoh tersebut dikecualikan (masukkan ke "detailedExplanation" dan "commonMisconceptions").
    - Untuk soal yang memiliki opsi istilah/rumus berbeda pada pilihan A/B/C/D, jelaskan definisi dan pembeda masing-masing istilah/rumus tersebut di "detailedExplanation", "comparisons", atau "glossary".
 3. STANDAR NOTASI MATEMATIKA, PERSAMAAN & LOGIKA SIMBOLIK (LaTeX):
-   - Seluruh persamaan matematika, pecahan ($\frac{a}{b}$), akar ($\sqrt{x}$), pangkat ($x^n$), indeks ($x_i$), limit ($\lim_{x \to a}$), integral, matriks, notasi himpunan ($\in, \subset, \subseteq, \cup, \cap, \emptyset, A^c, \mathbb{R}$), dan logika matematika ($\neg, \land, \lor, \Rightarrow, \Leftrightarrow, \equiv, \forall, \exists$) di SELURUH field teks WAJIB ditulis dengan format LaTeX: gunakan $...$ untuk inline math dan $$...$$ untuk rumus blok.
+   - Seluruh persamaan matematika, pecahan ($\\frac{a}{b}$), akar ($\\sqrt{x}$), pangkat ($x^n$), indeks ($x_i$), limit ($\\lim_{x \\to a}$), integral, matriks, notasi himpunan ($\\in, \\subset, \\subseteq, \\cup, \\cap, \\emptyset, A^c, \\mathbb{R}$), dan logika matematika ($\\neg, \\land, \\lor, \\Rightarrow, \\Leftrightarrow, \\equiv, \\forall, \\exists$) di SELURUH field teks WAJIB ditulis dengan format LaTeX: gunakan $...$ untuk inline math dan $$...$$ untuk rumus blok.
    - Array "formulasOrProcedures" KHUSUS diisi apabila modul ini merupakan materi Matematika / Eksakta / Hitungan yang memuat rumus, teorema, hukum aljabar/logika/himpunan, atau identitas matematika (berisi "title", "content" dalam LaTeX, dan "sourceRefs").
    - DILARANG mengisi "formulasOrProcedures" dengan rumus generik penilaian mandiri UT ("Tingkat Penguasaan = Jumlah Jawaban Benar / Jumlah Soal x 100%") atau tahapan manajemen/narasi teori non-matematika (tahapan teori/manajemen cukup ditaruh di "processesOrStages" pada topik terkait). Untuk modul teori non-matematika, kosongkan "formulasOrProcedures": [].
    - Pada materi matematika/eksakta, bagian "examples" dan "processesOrStages" WAJIB menyertakan contoh soal beserta langkah penyelesaian bertahap (Diketahui -> Rumus/Teorema -> Substitusi/Penurunan -> Hasil Akhir).
@@ -468,11 +398,11 @@ PRINSIP WAJIB:
    - "bmpSummary", "detailedExplanation", "coreConcepts", "comparisons", "processesOrStages", "formulasOrProcedures": Berisi sintesis lengkap dari halaman Rangkuman DAN hasil bedah konsep seluruh butir soal Tes Formatif BMP. Pertahankan istilah dan notasi asli BMP.
    - "aiExplanation", "simpleAnalogy", "examples" (dengan isAiGenerated=true): Berisi analogi bahasa manusiawi, intuisi visual/logika, dan contoh penyelesaian tambahan untuk mempermudah pemahaman mahasiswa.
 5. STRUKTUR MATERI PER TOPIK (SATU OBJEK TOPIK PER KEGIATAN BELAJAR):
-   - WAJIB menggabungkan seluruh halaman Rangkuman, Tes Formatif, dan halaman Materi Tambahan yang berada pada Kegiatan Belajar yang sama ke dalam SATU objek topik utuh untuk Kegiatan Belajar tersebut (misal jika batch ini berisi KB 1 & KB 2, hasilkan tepat 2 objek di "topics": satu untuk KB 1 dan satu untuk KB 2). JANGAN memecah halaman materi tambahan menjadi objek topik baru di luar jumlah KB!
+   - WAJIB menggabungkan seluruh halaman Rangkuman, Tes Formatif, dan halaman Materi Tambahan yang berada pada Kegiatan Belajar yang sama ke dalam SATU objek topik utuh untuk Kegiatan Belajar tersebut (misal jika modul ini berisi KB 1, KB 2, dan KB 3, hasilkan tepat 3 objek di "topics": satu untuk KB 1, satu untuk KB 2, dan satu untuk KB 3 secara lengkap tanpa dikompresi). JANGAN memecah halaman materi tambahan menjadi objek topik baru di luar jumlah KB!
    - "topicLabel": Judul Kegiatan Belajar yang jelas dan diawali nomor KB (misal: "Kegiatan Belajar 1: ...").
    - "learningObjectives": 3-5 sasaran pembelajaran spesifik yang merangkum Rangkuman, Materi, & Tes Formatif KB tersebut.
    - "coreConcepts": Seluruh konsep/definisi/sifat kunci dari Rangkuman, Materi, & seluruh nomor Tes Formatif.
-   - "detailedExplanation": Uraian penjelasan mendalam (4-6 paragraf terstruktur yang mencakup semua konsep & rumus di Rangkuman/Materi + semua materi yang ditanyakan pada setiap nomor soal Tes Formatif).
+   - "detailedExplanation": Uraian penjelasan mendalam dan panjang lebar tanpa dikompresi (minimal 5-8 paragraf terstruktur yang mencakup semua konsep & rumus di Rangkuman/Materi + semua materi yang ditanyakan pada setiap nomor soal Tes Formatif).
    - "conceptRelationships": Keterhubungan atau ketergantungan antar konsep/teorema.
    - "comparisons": Perbandingan terstruktur (itemA, itemB, distinction) untuk istilah/notasi/rumus yang berpotensi tertukar.
    - "processesOrStages": Alur langkah penyelesaian soal, pembuktian, atau tahapan prosedural.

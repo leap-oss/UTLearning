@@ -124,17 +124,17 @@ ${previousContext}
 Materi Sumber Terverifikasi BMP untuk Batch Ini:
 ${sourceBlocks}
 
-Instruksi Khusus Batch ${bIdx + 1}:
-1. Inventarisasi menyeluruh paragraf Rangkuman dan seluruh butir soal Tes Formatif pada sumber batch ini.
-2. Susun topik bahan belajar yang lengkap dan mendalam terpisah per Kegiatan Belajar (${batchKbTitles}).
-3. Dilarang melewatkan satupun konsep, faktor, atau pengecualian ("kecuali...") dari butir soal Tes Formatif.
+Instruksi Khusus Batch ${bIdx + 1} (ZERO COMPRESSION — MAKSIMALKAN KUOTA TOKEN):
+1. Inventarisasi menyeluruh seluruh paragraf Rangkuman, Materi, dan seluruh butir soal Tes Formatif pada sumber ini.
+2. Susun topik bahan belajar yang SANGAT LENGKAP, PANJANG, dan MENDALAM terpisah per Kegiatan Belajar (${batchKbTitles} — hasilkan tepat ${batch.kbs.length} objek di dalam array "topics", masing-masing minimal 5-8 paragraf di "detailedExplanation"). DILARANG mengompresi atau meringkas pendek materi karena kuota output token sangat besar (65.536 token)!
+3. Dilarang melewatkan satupun konsep, faktor, rumus, atau pengecualian ("kecuali...") dari seluruh butir soal Tes Formatif.
 ${
   isFinal
-    ? `4. Rancang TEPAT ${fixedQuestionCount} butir soal latihan awal ("initialQuestions") yang proporsional menguji seluruh Kegiatan Belajar pada modul ini (${allKbTitles}), selaras dengan materi yang telah disusun.`
+    ? `4. Rancang TEPAT ${fixedQuestionCount} butir soal latihan awal ("initialQuestions") yang proporsional menguji seluruh Kegiatan Belajar pada modul ini (${allKbTitles}), lengkap dengan pembahasan mendalam, selaras dengan materi yang telah disusun.`
     : '4. Fokus penuh pada penyusunan topik dan glosarium mendalam untuk batch ini.'
 }
 
-Hasilkan output dalam format JSON sesuai schema.`;
+Hasilkan output lengkap tanpa kompresi dalam format JSON sesuai schema.`;
 
     const responseSchema = isFinal
       ? STUDY_PACK_SYNTHESIS_JSON_SCHEMA
