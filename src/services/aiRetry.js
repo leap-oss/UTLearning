@@ -93,12 +93,12 @@ export function classifyAiError(error) {
   }
 
   if (status === 429 || lower.includes('resource_exhausted') || lower.includes('rate limit') || lower.includes('quota')) {
+    const isPerMinute = /per\s*minute|perminute|rpm|tpm|try again in|retry in\s*\d+/i.test(lower);
     const isDailyQuota =
-      lower.includes('per day') ||
-      lower.includes('per_day') ||
-      lower.includes('daily') ||
-      lower.includes('generaterequestsperday') ||
-      lower.includes('rpd');
+      !isPerMinute &&
+      /per\s*day|per_day|perday|daily|rpd|requestsperday|tokensperday|limit:\s*0|exceeded your current quota|plan and billing/i.test(
+        lower
+      );
 
     if (isDailyQuota) {
       return {

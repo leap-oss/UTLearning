@@ -1,22 +1,125 @@
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import crypto from 'node:crypto';
 import dotenv from 'dotenv';
 import { GoogleGenAI } from '@google/genai';
 import { getEnvConfig, parseApiKeys, DEFAULT_GEMINI_MODEL_CHAIN } from '../config/env.js';
+
+const DEFAULT_COOLDOWN_CACHE_PATH = path.join(os.tmpdir(), 'ut-learning-gemini-cooldowns.json');
 
 export function maskApiKey(key) {
   if (!key || key.length <= 8) return '***';
   return `${key.slice(0, 4)}...${key.slice(-4)}`;
 }
 
+/**
+ * Computes milliseconds until Google AI Studio's daily RPD reset (midnight America/Los_Angeles).
+ */
+export function getMsUntilDailyQuotaReset(nowMs = Date.now()) {
+  try {
+    const parts = new Intl.DateTimeFormat('en-US', {
+      timeZone: 'America/Los_Angeles',
+      hour12: false,
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+    }).formatToParts(new Date(nowMs));
+    const getPart = (t) => Number.parseInt(parts.find((p) => p.type === t)?.value || '0', 10) || 0;
+    const h = getPart('hour') % 24;
+    const m = getPart('minute');
+    const s = getPart('second');
+    const elapsedTodayMs = ((h * 60 + m) * 60 + s) * 1000;
+    const remainingMs = 24 * 60 * 60 * 1000 - elapsedTodayMs + 60_000;
+    return Math.max(5 * 60 * 1000, Math.min(24 * 60 * 60 * 1000 + 60_000, remainingMs));
+  } catch {
+    return 24 * 60 * 60 * 1000;
+  }
+}
+
+function formatDurationShort(ms) {
+  const totalSec = Math.max(1, Math.round(ms / 1000));
+  if (totalSec < 60) return `${totalSec}d`;
+  const totalMin = Math.round(totalSec / 60);
+  if (totalMin < 60) return `${totalMin}m`;
+  const hrs = Math.floor(totalMin / 60);
+  const mins = totalMin % 60;
+  return mins > 0 ? `${hrs}j ${mins}m` : `${hrs}j`;
+}
+
 export class GeminiApiKeyPool {
-  constructor() {
+  constructor(options = {}) {
     this.keys = [];
     this.currentIndex = 0;
     this.clientCache = new Map();
-    this.cooldowns = new Map(); // `${model}::${key}` or key -> number (timestamp)
+    this.cooldowns = new Map(); // `${model}::${hash(key)}` -> number (timestamp)
+    this.failureStreaks = new Map(); // `${model}::${hash(key)}` -> number
+    this._keyHashCache = new Map();
+    this.persistPath =
+      options.persistPath !== undefined
+        ? options.persistPath
+        : process.env.NODE_ENV === 'test'
+          ? null
+          : DEFAULT_COOLDOWN_CACHE_PATH;
+    this._persistenceLoaded = false;
+  }
+
+  _hashKey(key) {
+    let h = this._keyHashCache.get(key);
+    if (!h) {
+      h = crypto.createHash('sha256').update(String(key || '')).digest('hex').slice(0, 16);
+      this._keyHashCache.set(key, h);
+    }
+    return h;
   }
 
   _cooldownKey(key, model = '*') {
-    return `${model || '*'}::${key}`;
+    return `${model || '*'}::${this._hashKey(key)}`;
+  }
+
+  _ensureLoaded() {
+    if (this._persistenceLoaded || !this.persistPath) {
+      this._persistenceLoaded = true;
+      return;
+    }
+    this._persistenceLoaded = true;
+    try {
+      if (!fs.existsSync(this.persistPath)) return;
+      const raw = JSON.parse(fs.readFileSync(this.persistPath, 'utf8'));
+      const now = Date.now();
+      if (raw && typeof raw.entries === 'object') {
+        for (const [entryKey, until] of Object.entries(raw.entries)) {
+          if (typeof until === 'number' && until > now) {
+            this.cooldowns.set(entryKey, until);
+          }
+        }
+      }
+      if (Number.isInteger(raw?.currentIndex) && raw.currentIndex >= 0) {
+        this.currentIndex = raw.currentIndex;
+      }
+    } catch {
+      // Ignore corrupt/unreadable temp cache
+    }
+  }
+
+  _savePersistence() {
+    if (!this.persistPath) return;
+    try {
+      const now = Date.now();
+      const entries = {};
+      for (const [entryKey, until] of this.cooldowns.entries()) {
+        if (typeof until === 'number' && until > now + 15_000) {
+          entries[entryKey] = until;
+        }
+      }
+      fs.writeFileSync(
+        this.persistPath,
+        JSON.stringify({ version: 1, currentIndex: this.currentIndex, entries }),
+        'utf8'
+      );
+    } catch {
+      // Ignore write failures in read-only environments
+    }
   }
 
   _getCooldownUntil(key, model = '*') {
@@ -28,6 +131,7 @@ export class GeminiApiKeyPool {
   }
 
   sync() {
+    this._ensureLoaded();
     if (process.env.NODE_ENV !== 'test') {
       try {
         dotenv.config({ override: true });
@@ -62,8 +166,9 @@ export class GeminiApiKeyPool {
     }
 
     const now = Date.now();
+    const startIdx = this.currentIndex;
     for (let offset = 0; offset < this.keys.length; offset++) {
-      const idx = (this.currentIndex + offset) % this.keys.length;
+      const idx = (startIdx + offset) % this.keys.length;
       const key = this.keys[idx];
       const cooldownUntil = this._getCooldownUntil(key, model);
       if (cooldownUntil <= now) {
@@ -105,27 +210,57 @@ export class GeminiApiKeyPool {
     return client;
   }
 
-  markCooldown(key, durationMs = 60000, model = '*') {
-    const until = Date.now() + durationMs;
-    this.cooldowns.set(this._cooldownKey(key, model), until);
+  markCooldown(key, durationMs = 60000, model = '*', { escalateRepeated = false } = {}) {
+    this._ensureLoaded();
+    const streakKey = this._cooldownKey(key, model);
+    let effectiveDurationMs = durationMs;
+
+    if (escalateRepeated) {
+      const nextStreak = (this.failureStreaks.get(streakKey) || 0) + 1;
+      this.failureStreaks.set(streakKey, nextStreak);
+      if (nextStreak >= 5) {
+        effectiveDurationMs = Math.max(effectiveDurationMs, getMsUntilDailyQuotaReset());
+      } else if (nextStreak >= 3) {
+        effectiveDurationMs = Math.max(effectiveDurationMs, 15 * 60 * 1000);
+      }
+    }
+
+    const until = Date.now() + effectiveDurationMs;
+    const prevUntil = this.cooldowns.get(streakKey) || 0;
+    if (until > prevUntil) {
+      this.cooldowns.set(streakKey, until);
+    }
     if (!model || model === '*') {
-      this.cooldowns.set(key, until);
+      const prevLegacy = this.cooldowns.get(key) || 0;
+      if (until > prevLegacy) {
+        this.cooldowns.set(key, until);
+      }
     }
     if (this.keys.length > 1) {
-      this.currentIndex = (this.currentIndex + 1) % this.keys.length;
+      const idx = this.keys.indexOf(key);
+      this.currentIndex = ((idx !== -1 ? idx : this.currentIndex) + 1) % this.keys.length;
     }
+    this._savePersistence();
+    return effectiveDurationMs;
   }
 
   markSuccess(key, model = '*') {
+    this._ensureLoaded();
+    const hadLongCooldown =
+      this.cooldowns.has(this._cooldownKey(key, model)) || this.cooldowns.has(this._cooldownKey(key, '*'));
     this.cooldowns.delete(this._cooldownKey(key, model));
     this.cooldowns.delete(this._cooldownKey(key, '*'));
     this.cooldowns.delete(key);
+    this.failureStreaks.delete(this._cooldownKey(key, model));
     // Round-robin advance so consecutive calls spread RPM/RPD evenly across all keys
     if (this.keys.length > 1) {
       const idx = this.keys.indexOf(key);
       if (idx !== -1) {
         this.currentIndex = (idx + 1) % this.keys.length;
       }
+    }
+    if (hadLongCooldown) {
+      this._savePersistence();
     }
   }
 
@@ -136,11 +271,19 @@ export class GeminiApiKeyPool {
     return this.keys.every((key) => this._getCooldownUntil(key, model) > now);
   }
 
-  reset() {
+  reset(clearDisk = false) {
     this.keys = [];
     this.currentIndex = 0;
     this.clientCache.clear();
     this.cooldowns.clear();
+    this.failureStreaks.clear();
+    if (clearDisk && this.persistPath) {
+      try {
+        if (fs.existsSync(this.persistPath)) fs.unlinkSync(this.persistPath);
+      } catch {
+        // Ignore cleanup errors
+      }
+    }
   }
 }
 
@@ -353,12 +496,12 @@ function classifyGeminiCallFailure(err) {
     errMsg.includes('rate_limit') ||
     errMsg.includes('rate limit')
   ) {
+    const isPerMinute = /per\s*minute|perminute|rpm|tpm|try again in|retry in\s*\d+/i.test(errMsg);
     const isDaily =
-      errMsg.includes('per day') ||
-      errMsg.includes('per_day') ||
-      errMsg.includes('perday') ||
-      errMsg.includes('daily') ||
-      errMsg.includes('rpd');
+      !isPerMinute &&
+      /per\s*day|per_day|perday|daily|rpd|requestsperday|tokensperday|limit:\s*0|exceeded your current quota|plan and billing/i.test(
+        errMsg
+      );
     return { kind: isDaily ? 'daily_quota' : 'rate_limit', status };
   }
 
@@ -371,11 +514,14 @@ function classifyGeminiCallFailure(err) {
     status === 502 ||
     status === 503 ||
     status === 504 ||
+    err?.name === 'TimeoutError' ||
+    err?.name === 'AbortError' ||
     errMsg.includes('overloaded') ||
     errMsg.includes('unavailable') ||
     errMsg.includes('internal') ||
     errMsg.includes('deadline_exceeded') ||
     errMsg.includes('timeout') ||
+    errMsg.includes('aborted') ||
     errMsg.includes('econnreset') ||
     errMsg.includes('fetch failed')
   ) {
@@ -451,19 +597,34 @@ export async function generateStructuredContent({
     }
 
     let shouldFailoverToNextModel = false;
+    const attemptedKeys = new Set();
+    const requestTimeoutMs =
+      taskType === 'extract_toc_modules' || taskType === 'generate_remedial' ? 90_000 : 180_000;
 
     for (let attempt = 0; attempt < maxAttemptsPerModel; attempt++) {
       const keyInfo = pool.getActiveKeyInfo(model);
+      if (attemptedKeys.has(keyInfo.key) || (keyInfo.allOnCooldown && (attempt > 0 || hasMoreModels))) {
+        if (hasMoreModels) {
+          shouldFailoverToNextModel = true;
+        }
+        break;
+      }
+      attemptedKeys.add(keyInfo.key);
+
       const ai = pool.getClientForKey(keyInfo.key);
       // On final fallback model, allow 1 retry without strict responseSchema if strict schema returned empty/invalid
-      const activeConfig =
+      const baseConfig =
         !hasMoreModels && attempt > 0 && generationConfig.responseSchema && lastErr?.errorCode === 'OUTPUT_SCHEMA_INVALID'
           ? (() => {
               const relaxed = { ...generationConfig };
               delete relaxed.responseSchema;
               return relaxed;
             })()
-          : generationConfig;
+          : { ...generationConfig };
+      if (typeof AbortSignal?.timeout === 'function') {
+        baseConfig.abortSignal = AbortSignal.timeout(requestTimeoutMs);
+      }
+      const activeConfig = baseConfig;
 
       try {
         let response;
@@ -485,6 +646,9 @@ export async function generateStructuredContent({
           ) {
             const fallbackConfig = { ...activeConfig };
             delete fallbackConfig.responseSchema;
+            if (typeof AbortSignal?.timeout === 'function') {
+              fallbackConfig.abortSignal = AbortSignal.timeout(requestTimeoutMs);
+            }
             response = await ai.models.generateContent({
               model,
               contents,
@@ -566,22 +730,31 @@ export async function generateStructuredContent({
         if (kind === 'auth_error' || kind === 'daily_quota' || kind === 'rate_limit') {
           const isAuth = kind === 'auth_error';
           const isDaily = kind === 'daily_quota';
-          const cooldownMs = isAuth || isDaily ? 60 * 60 * 1000 : 30 * 1000;
+          const baseCooldownMs = isAuth
+            ? 24 * 60 * 60 * 1000
+            : isDaily
+              ? getMsUntilDailyQuotaReset()
+              : 45 * 1000;
           const reason = isAuth
             ? 'key tidak valid / 403'
             : isDaily
               ? 'kuota harian habis (RPD)'
               : 'rate limit sementara (RPM)';
 
-          pool.markCooldown(keyInfo.key, cooldownMs, isAuth ? '*' : model);
+          const appliedMs = pool.markCooldown(keyInfo.key, baseCooldownMs, isAuth ? '*' : model, {
+            escalateRepeated: kind === 'rate_limit',
+          });
 
-          if (keys.length > 1 && attempt < maxAttemptsPerModel - 1) {
+          if (keys.length > 1 && attempt < maxAttemptsPerModel - 1 && !pool.areAllKeysOnCooldown(model)) {
             console.warn(
-              `[geminiClient] [${model}] API Key #${keyInfo.index + 1}/${keyInfo.total} (${maskApiKey(keyInfo.key)}) terkena ${reason}. Beralih otomatis ke API key #${((keyInfo.index + 1) % keyInfo.total) + 1}...`
+              `[geminiClient] [${model}] API Key #${keyInfo.index + 1}/${keyInfo.total} (${maskApiKey(keyInfo.key)}) terkena ${reason} (dikunci ${formatDurationShort(appliedMs)}). Beralih ke API key berikutnya...`
             );
             continue;
           }
 
+          console.warn(
+            `[geminiClient] [${model}] API Key #${keyInfo.index + 1}/${keyInfo.total} (${maskApiKey(keyInfo.key)}) terkena ${reason} (dikunci ${formatDurationShort(appliedMs)}). Semua key model ini cooldown.`
+          );
           if (hasMoreModels) {
             shouldFailoverToNextModel = true;
             break;
@@ -590,11 +763,17 @@ export async function generateStructuredContent({
         }
 
         if (kind === 'transient_server') {
-          pool.markCooldown(keyInfo.key, 15 * 1000, model);
+          const appliedMs = pool.markCooldown(keyInfo.key, 30 * 1000, model, {
+            escalateRepeated: true,
+          });
           const maxTransientKeyTries = hasMoreModels ? Math.min(2, maxAttemptsPerModel) : maxAttemptsPerModel;
-          if (keys.length > 1 && attempt < maxTransientKeyTries - 1) {
+          if (
+            keys.length > 1 &&
+            attempt < maxTransientKeyTries - 1 &&
+            !pool.areAllKeysOnCooldown(model)
+          ) {
             console.warn(
-              `[geminiClient] [${model}] Gangguan sementara pada API Key #${keyInfo.index + 1}/${keyInfo.total}. Mencoba API key berikutnya...`
+              `[geminiClient] [${model}] Gangguan sementara pada API Key #${keyInfo.index + 1}/${keyInfo.total} (cooldown ${formatDurationShort(appliedMs)}). Mencoba API key berikutnya...`
             );
             continue;
           }

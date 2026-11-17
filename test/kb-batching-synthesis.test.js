@@ -535,7 +535,13 @@ test('RPD Efficiency Architecture: OCR up to 15 images in 1 request, Study Pack 
 
 test('5-API Key Pool + 4-Tier Model Failover Cascade: gemini-4-hydrogen -> gemini-3.6-flash -> gemini-3.8-flash -> gemini-3.5-flash-lite', async () => {
   const { getEnvConfig, DEFAULT_GEMINI_MODEL_CHAIN } = await import('../src/config/env.js');
-  const { defaultApiKeyPool, generateStructuredContent } = await import('../src/services/geminiClient.js');
+  const {
+    GeminiApiKeyPool,
+    defaultApiKeyPool,
+    generateStructuredContent,
+    getMsUntilDailyQuotaReset,
+  } = await import('../src/services/geminiClient.js');
+  const os = await import('node:os');
 
   assert.deepEqual(DEFAULT_GEMINI_MODEL_CHAIN, [
     'gemini-4-hydrogen',
@@ -615,6 +621,47 @@ test('5-API Key Pool + 4-Tier Model Failover Cascade: gemini-4-hydrogen -> gemin
         Array(5).fill('gemini-3.8-flash')
       );
       assert.equal(attemptedCalls[15].model, 'gemini-3.5-flash-lite');
+
+      // Second call immediately skips all daily-locked keys/models and hits gemini-3.5-flash-lite in 1 attempt
+      const resSecond = await generateStructuredContent({
+        taskType: 'extract_sources',
+        contents: 'Second call skips daily-locked models',
+      });
+      assert.equal(resSecond.model, 'gemini-3.5-flash-lite');
+      assert.equal(attemptedCalls.length, 17, 'Second call must skip all cooled-down tiers without probing keys again');
+
+      // Partial exhaustion: if keys 1-4 already cooled down on gemini-4-hydrogen and only key 5 remains, failing key 5 must NOT re-try keys 1-4
+      defaultApiKeyPool.reset();
+      for (const k of ['key-1-alpha1234', 'key-2-bravo1234', 'key-3-charlie12', 'key-4-delta1234']) {
+        defaultApiKeyPool.markCooldown(k, 60 * 60 * 1000, 'gemini-4-hydrogen');
+      }
+      attemptedCalls.length = 0;
+      const resPartial = await generateStructuredContent({
+        taskType: 'extract_sources',
+        contents: 'Only key-5 left on primary model',
+      });
+      assert.equal(resPartial.model, 'gemini-3.5-flash-lite');
+      const h4Calls = attemptedCalls.filter((c) => c.model === 'gemini-4-hydrogen');
+      assert.equal(h4Calls.length, 1, 'Must only attempt remaining active key-5 on gemini-4-hydrogen');
+      assert.equal(h4Calls[0].key, 'key-5-echo12345');
+
+      // Daily reset window & persistent cooldown file across restarts (hashed keys, no plaintext secret stored)
+      const resetMs = getMsUntilDailyQuotaReset();
+      assert.ok(resetMs >= 5 * 60 * 1000 && resetMs <= 24 * 60 * 60 * 1000 + 60_000);
+
+      const persistFile = path.join(os.default.tmpdir(), `ut-test-cd-${Date.now()}.json`);
+      try {
+        const poolA = new GeminiApiKeyPool({ persistPath: persistFile });
+        poolA.getKeys();
+        poolA.markCooldown('key-1-alpha1234', resetMs, 'gemini-4-hydrogen');
+        const rawDisk = fs.readFileSync(persistFile, 'utf8');
+        assert.equal(rawDisk.includes('key-1-alpha1234'), false, 'Persisted cooldown file must hash keys');
+
+        const poolB = new GeminiApiKeyPool({ persistPath: persistFile });
+        assert.equal(poolB.getActiveKeyInfo('gemini-4-hydrogen').key, 'key-2-bravo1234');
+      } finally {
+        fs.rmSync(persistFile, { force: true });
+      }
     } finally {
       defaultApiKeyPool.getClientForKey = origGetClient;
       defaultApiKeyPool.reset();
