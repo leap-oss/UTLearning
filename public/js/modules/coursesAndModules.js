@@ -375,6 +375,21 @@ window.AppModules.coursesAndModules = {
     }
   },
 
+  handleTocDrop(event) {
+    this.isTocDragOver = false;
+    if (this.isAutoMappingToc || !this.activeCourse) return;
+    const { accepted, rejectedCount } = this.extractImagesFromInput(event.dataTransfer, {
+      allowAnyImage: true,
+    });
+    if (accepted.length === 0) {
+      if (rejectedCount > 0) {
+        this.showError('Hanya file gambar (JPEG, PNG, atau WebP) yang dapat dipindai.');
+      }
+      return;
+    }
+    this.handleTocImageUpload({ target: { files: accepted, value: '' } });
+  },
+
   async handleTocImageUpload(event) {
     const files = event.target.files;
     if (!files || files.length === 0 || !this.activeCourse) return;

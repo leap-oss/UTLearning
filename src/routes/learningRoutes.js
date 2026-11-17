@@ -6,6 +6,7 @@ import express from 'express';
 import multer from 'multer';
 import { z } from 'zod';
 import { getEnvConfig } from '../config/env.js';
+import { describeDbError } from '../db/client.js';
 import {
   enqueueSourceExtraction,
   updateSourceAsset,
@@ -140,9 +141,10 @@ export function createLearningRouter({
           details: err.details || undefined,
         });
       }
+      console.error('[learningRoutes] Error enqueuing source extraction:', err);
       return res.status(500).json({
         error: 'SERVER_ERROR',
-        message: err.message || 'Gagal mengantrekan ekstraksi sumber.',
+        message: describeDbError(err) || 'Gagal mengantrekan ekstraksi sumber.',
       });
     }
   });
@@ -254,9 +256,10 @@ export function createLearningRouter({
           details: err.details || undefined,
         });
       }
+      console.error('[learningRoutes] Error enqueuing study pack synthesis:', err);
       return res.status(500).json({
         error: 'SERVER_ERROR',
-        message: err.message || 'Gagal mengantrekan pembuatan Study Pack.',
+        message: describeDbError(err) || 'Gagal mengantrekan pembuatan Study Pack.',
       });
     }
   });

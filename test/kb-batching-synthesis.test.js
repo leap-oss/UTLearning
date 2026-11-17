@@ -685,4 +685,327 @@ test('Math Layout Preservation: interval math like (-infty, 0) cup (0, infty) an
     healed.includes('A. $(-\\infty, 0) \\cup (0, \\infty)$'),
     'Frontend must heal legacy split interval math back onto one line so KaTeX renders it'
   );
+
+  // Also test splitting collapsed long prose walls (e.g. NL=0 AI study pack explanations) into paragraphs
+  const { ensureReadableParagraphs } = await import('../src/services/studyPack/studyPackSchemas.js');
+  const wallOfText =
+    'Keamanan berkas dalam sistem operasi mengatur hak akses direktori. Pada sistem operasi Windows, pengaturan dilakukan di tab Security dengan fitur (1) Full control; dan (2) Read and execute untuk berkas program (.exe). ' +
+    'Apabila folder induk mewariskan izin, tersedia opsi Disable Inheritance di menu lanjutan. ' +
+    'Sementara itu, pada sistem operasi Linux, perintah chown dan chgrp mengatur kepemilikan berkas serta direktori bagi user, group, dan other. ' +
+    'Selain kepemilikan, perintah chmod u+x text.txt mengatur izin eksekusi secara simbolik tanpa mengganggu isi berkas. ' +
+    'Pada metode numerik, sembilan bit permission memakai bobot biner $1$ atau $0$ dengan total oktal $4+2+1=7$ yang sangat ringkas.';
+
+  const frontendParagraphs = formatter.normalizeCollapsedMathLayout(wallOfText).split('\n\n');
+  const backendParagraphs = ensureReadableParagraphs(wallOfText).split('\n\n');
+  assert.ok(frontendParagraphs.length >= 2, 'Frontend formatter must break un-paragraphed long prose into multiple paragraphs');
+  assert.ok(backendParagraphs.length >= 2, 'Backend normalizer must break un-paragraphed long prose into multiple paragraphs');
+  assert.ok(!backendParagraphs.some((p) => p.endsWith('text.') || p.endsWith('(')), 'Must never break mid-filename (.txt/.exe) or inside parentheses');
+  assert.ok(backendParagraphs.join('\n\n').includes('$4+2+1=7$'), 'Math tokens must remain intact across paragraph splits');
+});
+
+test('Upload UX: Drag-and-Drop and Clipboard Paste (Ctrl+V) work alongside manual file input without breaking TOC/module handlers', async () => {
+  const { renderModularHtml, renderModularJs } = await import('../src/services/htmlRenderer.js');
+  const publicDir = path.join(projectRoot, 'public');
+  const html = renderModularHtml(publicDir);
+  const bundledJs = renderModularJs(publicDir);
+
+  assert.ok(html.includes('@drop.prevent="handleSourceDrop($event)"'), 'Module dropzone must support drag-and-drop');
+  assert.ok(html.includes('@click="pasteSourceFromClipboard()"'), 'Module upload must include clipboard paste trigger');
+  assert.ok(html.includes('@change="handleFileSelect($event)"'), 'Manual file upload must remain intact');
+  assert.ok(html.includes('@drop.prevent="handleTocDrop($event)"'), 'Course TOC dropzone must support drag-and-drop');
+  assert.ok(html.includes('class="staged-thumb"'), 'Staged file rows should render thumbnail previews');
+  assert.equal(html.includes('id="staged-default-label"'), false, 'Staging UI must not show default label select');
+  assert.equal(html.includes('x-model="item.label"'), false, 'Staged rows must not show manual page type form (AI determines label)');
+
+  // Evaluate state + sourcesAndExtraction + combined bundle (browser double-load) in sandboxed context
+  const fakeWindow = { AppModules: {} };
+  const notices = [];
+  const errors = [];
+  const stateCode = fs.readFileSync(path.join(projectRoot, 'public/js/modules/state.js'), 'utf8');
+  const srcCode = fs.readFileSync(path.join(projectRoot, 'public/js/modules/sourcesAndExtraction.js'), 'utf8');
+  new Function('window', stateCode)(fakeWindow);
+  new Function('window', srcCode)(fakeWindow);
+  assert.doesNotThrow(
+    () => new Function(stateCode + '\n' + srcCode + '\n' + bundledJs),
+    'Combined modular JS bundle must parse cleanly even when modules load before /js/app.js'
+  );
+
+  const ctx = {
+    ...fakeWindow.AppModules.state,
+    ...fakeWindow.AppModules.sourcesAndExtraction,
+    activeModule: { id: 'mod-1', sources: [{ id: 'existing-1' }] },
+    currentView: 'module',
+    moduleTab: 'sources',
+    stagedFiles: [],
+    showNotice: (m) => notices.push(m),
+    showError: (m) => errors.push(m),
+  };
+
+  // Stub URL.createObjectURL & URL.revokeObjectURL for Node test
+  const origCreate = globalThis.URL.createObjectURL;
+  const origRevoke = globalThis.URL.revokeObjectURL;
+  let seqUrl = 0;
+  globalThis.URL.createObjectURL = () => `blob:mock-${++seqUrl}`;
+  globalThis.URL.revokeObjectURL = () => {};
+
+  try {
+    // 1) Simulate Drag-and-Drop with 1 valid PNG and 1 unsupported PDF
+    const validImg = new File([new Uint8Array([1, 2, 3])], 'hal-2.png', { type: 'image/png' });
+    const invalidPdf = new File([new Uint8Array([4, 5])], 'notes.pdf', { type: 'application/pdf' });
+    ctx.isSourceDragOver = true;
+    ctx.handleSourceDrop({
+      dataTransfer: {
+        items: [
+          { kind: 'file', getAsFile: () => validImg },
+          { kind: 'file', getAsFile: () => invalidPdf },
+        ],
+      },
+    });
+    assert.equal(ctx.isSourceDragOver, false);
+    assert.equal(ctx.stagedFiles.length, 1);
+    assert.equal('label' in ctx.stagedFiles[0], false, 'Staged items no longer carry manual label');
+    assert.equal(ctx.stagedFiles[0].pageOrder, 2, 'pageOrder must continue after existing sources');
+    assert.ok(errors[0].includes('1 file non-gambar diabaikan'));
+
+    // Also verify AI auto-classification helper & schema enum
+    const { resolveExtractedPageLabel, EXTRACTION_RESPONSE_JSON_SCHEMA } = await import('../src/services/extractionService.js');
+    assert.deepEqual(EXTRACTION_RESPONSE_JSON_SCHEMA.properties.pages.items.properties.pageType.enum, [
+      'materi',
+      'rangkuman',
+      'tes_formatif',
+    ]);
+    assert.equal(resolveExtractedPageLabel({ pageType: 'tes_formatif', extractedText: 'Isi biasa' }), 'tes_formatif');
+    assert.equal(resolveExtractedPageLabel({ pageType: 'rangkuman', extractedText: 'Isi biasa' }), 'rangkuman');
+    assert.equal(resolveExtractedPageLabel({ pageTitle: 'Tes Formatif 2', extractedText: '1) Apa...' }), 'tes_formatif');
+    assert.equal(resolveExtractedPageLabel({ pageTitle: 'Rangkuman KB 1', extractedText: 'Ringkasan...' }), 'rangkuman');
+
+    // 2) Simulate Ctrl+V clipboard screenshot with generic 'image.png' name
+    let prevented = false;
+    const clipPng = new File([new Uint8Array([9, 8, 7])], 'image.png', { type: 'image/png' });
+    ctx.handleGlobalImagePaste({
+      clipboardData: {
+        items: [{ kind: 'file', getAsFile: () => clipPng }],
+      },
+      preventDefault: () => {
+        prevented = true;
+      },
+    });
+    assert.equal(prevented, true);
+    assert.equal(ctx.stagedFiles.length, 2);
+    assert.match(ctx.stagedFiles[1].file.name, /^clipboard-.*\.png$/, 'Generic clipboard filename should be renamed');
+    assert.equal(ctx.stagedFiles[1].pageOrder, 3);
+
+    // 3) Text-only paste must NOT be hijacked (allows normal text editing)
+    let textPrevented = false;
+    ctx.handleGlobalImagePaste({
+      clipboardData: { items: [{ kind: 'string', getAsFile: () => null }] },
+      preventDefault: () => {
+        textPrevented = true;
+      },
+    });
+    assert.equal(textPrevented, false);
+    assert.equal(ctx.stagedFiles.length, 2);
+  } finally {
+    globalThis.URL.createObjectURL = origCreate;
+    globalThis.URL.revokeObjectURL = origRevoke;
+  }
+});
+
+test('Empty Response & 5xx Failover + Cooldown Skip + Extraction Sub-Batch Auto-Split', async () => {
+  const { defaultApiKeyPool, generateStructuredContent } = await import('../src/services/geminiClient.js');
+  const { defaultGeminiExtractionCall } = await import('../src/services/extractionService.js');
+
+  const snapshot = {};
+  for (const k of Object.keys(process.env)) {
+    if (/gemini/i.test(k)) {
+      snapshot[k] = process.env[k];
+      delete process.env[k];
+    }
+  }
+
+  try {
+    process.env.Gemini_API_1 = 'key-1-alpha1234';
+    process.env.Gemini_API_2 = 'key-2-bravo1234';
+    process.env.Gemini_API_3 = 'key-3-charlie12';
+    process.env.GEMINI_MODEL = 'gemini-4-hydrogen';
+
+    defaultApiKeyPool.reset();
+    const origGetClient = defaultApiKeyPool.getClientForKey.bind(defaultApiKeyPool);
+
+    try {
+      // Case 1: Primary model returns HTTP 200 empty response (RECITATION); fallback model 3.6 returns 500 on key-2 then succeeds on key-3
+      const calls1 = [];
+      defaultApiKeyPool.getClientForKey = (key) => ({
+        models: {
+          generateContent: async ({ model }) => {
+            calls1.push({ model, key });
+            if (model === 'gemini-4-hydrogen') {
+              return {
+                text: '',
+                candidates: [{ finishReason: 'RECITATION', content: { parts: [] } }],
+                usageMetadata: { promptTokenCount: 10035, totalTokenCount: 10035 },
+              };
+            }
+            if (model === 'gemini-3.6-flash' && key === 'key-2-bravo1234') {
+              const err500 = new Error('Internal server error');
+              err500.status = 500;
+              throw err500;
+            }
+            return {
+              text: JSON.stringify({ ok: true, modelUsed: model, keyUsed: key }),
+              usageMetadata: { promptTokenCount: 120, candidatesTokenCount: 80, totalTokenCount: 200 },
+            };
+          },
+        },
+      });
+
+      const res1 = await generateStructuredContent({
+        taskType: 'extract_sources',
+        contents: 'Test empty failover',
+      });
+      assert.equal(res1.model, 'gemini-3.6-flash');
+      assert.equal(res1.data.ok, true);
+      assert.deepEqual(
+        calls1,
+        [
+          { model: 'gemini-4-hydrogen', key: 'key-1-alpha1234' },
+          { model: 'gemini-3.6-flash', key: 'key-2-bravo1234' },
+          { model: 'gemini-3.6-flash', key: 'key-3-charlie12' },
+        ],
+        'Empty response on primary must immediately failover to next model with rotated API key'
+      );
+
+      // Case 2: Skip model whose keys are ALL already on RPD cooldown on subsequent calls
+      defaultApiKeyPool.reset();
+      for (const k of defaultApiKeyPool.getKeys()) {
+        defaultApiKeyPool.markCooldown(k, 60 * 60 * 1000, 'gemini-4-hydrogen');
+      }
+      assert.equal(defaultApiKeyPool.areAllKeysOnCooldown('gemini-4-hydrogen'), true);
+      assert.equal(defaultApiKeyPool.areAllKeysOnCooldown('gemini-3.6-flash'), false);
+
+      const calls2 = [];
+      defaultApiKeyPool.getClientForKey = (key) => ({
+        models: {
+          generateContent: async ({ model }) => {
+            calls2.push({ model, key });
+            return {
+              text: JSON.stringify({ ok: true }),
+              usageMetadata: { promptTokenCount: 50, candidatesTokenCount: 20, totalTokenCount: 70 },
+            };
+          },
+        },
+      });
+      const res2 = await generateStructuredContent({
+        taskType: 'extract_sources',
+        contents: 'Test cooldown skip',
+      });
+      assert.equal(res2.model, 'gemini-3.6-flash');
+      assert.equal(calls2.length, 1, 'Should skip exhausted gemini-4-hydrogen and hit gemini-3.6-flash in 1 call');
+
+      // Case 3: defaultGeminiExtractionCall auto-splits multi-image batch into halves if ALL 4 models return empty output when combined
+      defaultApiKeyPool.reset();
+      defaultApiKeyPool.getClientForKey = () => ({
+        models: {
+          generateContent: async ({ model, contents }) => {
+            const imageParts = (contents || []).filter((c) => c && c.inlineData);
+            if (imageParts.length > 2) {
+              return {
+                text: '',
+                candidates: [{ finishReason: 'OTHER', content: { parts: [] } }],
+                usageMetadata: { promptTokenCount: 500, totalTokenCount: 500 },
+              };
+            }
+            // Extract sourceImageId values from text parts right before each inlineData
+            const textParts = (contents || []).filter((c) => c && typeof c.text === 'string');
+            const ids = textParts
+              .map((p) => {
+                const m = p.text.match(/sourceImageId:\s*(\S+)/);
+                const po = p.text.match(/pageOrder:\s*(\d+)/);
+                return m ? { id: m[1], pageOrder: po ? Number(po[1]) : 1 } : null;
+              })
+              .filter(Boolean);
+
+            return {
+              text: JSON.stringify({
+                schemaVersion: 1,
+                pages: ids.map((item) => ({
+                  sourceImageId: item.id,
+                  pageOrder: item.pageOrder,
+                  pageTitle: `Hal ${item.pageOrder}`,
+                  extractedText: `Isi halaman ${item.pageOrder}`,
+                  sections: [],
+                  keyTerms: [],
+                  formulasOrTables: [],
+                  transcribedQuestions: [],
+                  ambiguousParts: [],
+                  needsReview: false,
+                })),
+              }),
+              usageMetadata: { promptTokenCount: 250, candidatesTokenCount: 150, totalTokenCount: 400 },
+            };
+          },
+        },
+      });
+
+      const fakeSources = [1, 2, 3, 4].map((n) => ({
+        source: {
+          id: `src-${n}`,
+          pageOrder: n,
+          label: 'materi',
+          fileName: `hal-${n}.png`,
+          mimeType: 'image/png',
+        },
+        buffer: Buffer.from([1, 2, 3]),
+      }));
+
+      const splitResult = await defaultGeminiExtractionCall({
+        moduleRecord: { moduleNumber: 6, title: 'Manajemen File Sistem Operasi' },
+        sourceRecordsWithBuffers: fakeSources,
+      });
+
+      assert.equal(splitResult.data.pages.length, 4);
+      assert.deepEqual(
+        splitResult.data.pages.map((p) => p.sourceImageId),
+        ['src-1', 'src-2', 'src-3', 'src-4']
+      );
+      assert.equal(splitResult.usageMetadata.totalTokenCount, 800);
+
+      // Case 4: Consecutive successful calls rotate round-robin across all 3 configured API keys
+      defaultApiKeyPool.reset();
+      const usedKeys = [];
+      defaultApiKeyPool.getClientForKey = (key) => ({
+        models: {
+          generateContent: async () => {
+            usedKeys.push(key);
+            return {
+              text: JSON.stringify({ ok: true }),
+              usageMetadata: { promptTokenCount: 10, candidatesTokenCount: 10, totalTokenCount: 20 },
+            };
+          },
+        },
+      });
+
+      for (let i = 0; i < 4; i++) {
+        await generateStructuredContent({
+          taskType: 'extract_sources',
+          contents: `Round robin ping ${i}`,
+        });
+      }
+      assert.deepEqual(usedKeys, [
+        'key-1-alpha1234',
+        'key-2-bravo1234',
+        'key-3-charlie12',
+        'key-1-alpha1234',
+      ]);
+    } finally {
+      defaultApiKeyPool.getClientForKey = origGetClient;
+      defaultApiKeyPool.reset();
+    }
+  } finally {
+    for (const k of Object.keys(process.env)) {
+      if (/gemini/i.test(k)) delete process.env[k];
+    }
+    Object.assign(process.env, snapshot);
+    defaultApiKeyPool.reset();
+  }
 });

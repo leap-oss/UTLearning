@@ -35,20 +35,43 @@
   <!-- TAB: SOURCES & EXTRACTION REVIEW -->
   <div x-show="moduleTab === 'sources'" role="tabpanel" aria-label="Sumber BMP" class="stack-xl">
     <div class="stack-md">
-      <label class="dropzone">
-        <div class="stack-2xs">
-          <span class="sub-title">Unggah foto halaman BMP (maks. 15 gambar dalam 1 request)</span>
-          <span class="meta">Rangkuman, Tes Formatif, atau halaman materi dalam JPEG, PNG, atau WebP. Pilih hingga 15 halaman sekaligus untuk diekstrak utuh dalam 1 request AI.</span>
+      <div
+        class="dropzone"
+        :class="{ 'dropzone--active': isSourceDragOver }"
+        @dragenter.prevent="isSourceDragOver = true"
+        @dragover.prevent="isSourceDragOver = true"
+        @dragleave.prevent="handleDropzoneDragLeave($event, 'isSourceDragOver')"
+        @drop.prevent="handleSourceDrop($event)"
+      >
+        <div class="stack-2xs" style="min-width: 0; flex: 1 1 18rem;">
+          <span
+            class="sub-title"
+            x-text="isSourceDragOver ? 'Lepaskan gambar di sini untuk ditambahkan ke antrean' : 'Unggah, seret & lepas, atau tempel (Ctrl+V) foto halaman BMP'"
+          ></span>
+          <span class="meta" id="module-source-upload-hint">
+            Maks. 15 gambar (JPEG, PNG, WebP) dalam 1 request. Setelah screenshot (mis. Win+Shift+S), cukup tekan <strong>Ctrl+V</strong> di halaman ini atau seret file ke kotak ini. Jenis halaman (Materi, Rangkuman, atau Tes Formatif) akan dideteksi otomatis oleh AI.
+          </span>
         </div>
-        <span class="btn" aria-hidden="true">Pilih foto</span>
-        <input
-          type="file"
-          multiple
-          accept="image/jpeg,image/png,image/webp"
-          @change="handleFileSelect($event)"
-          class="visually-hidden"
-        />
-      </label>
+        <div class="cluster cluster--tight dropzone-actions">
+          <button
+            type="button"
+            @click="pasteSourceFromClipboard()"
+            class="btn btn--ghost"
+          >
+            Tempel (Ctrl+V)
+          </button>
+          <label for="module-source-file-input" class="btn">Pilih foto</label>
+          <input
+            id="module-source-file-input"
+            type="file"
+            multiple
+            accept="image/jpeg,image/png,image/webp"
+            aria-describedby="module-source-upload-hint"
+            @change="handleFileSelect($event)"
+            class="visually-hidden"
+          />
+        </div>
+      </div>
 
       <template x-if="stagedFiles.length > 0">
         <div class="stack-md">
@@ -67,6 +90,11 @@
             <template x-for="(item, idx) in stagedFiles" :key="item.id">
               <div class="ledger-row staged-row">
                 <span class="row-index" x-text="String(idx + 1).padStart(2, '0')"></span>
+                <img
+                  class="staged-thumb"
+                  :src="item.previewUrl"
+                  :alt="`Preview halaman ${item.pageOrder}: ${item.file.name}`"
+                />
                 <div class="stack-2xs" style="min-width: 0">
                   <span class="sub-title" style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap" x-text="item.file.name"></span>
                   <span class="meta figure" x-text="formatBytes(item.file.size)"></span>
@@ -76,11 +104,6 @@
                     <span class="label">Hal.</span>
                     <input type="number" min="1" x-model="item.pageOrder" class="input input--narrow figure" aria-label="Nomor halaman" />
                   </label>
-                  <select x-model="item.label" class="select" aria-label="Jenis halaman">
-                    <option value="rangkuman">Rangkuman</option>
-                    <option value="tes_formatif">Tes Formatif</option>
-                    <option value="materi">Materi</option>
-                  </select>
                   <button type="button" @click="moveStagedFile(idx, -1)" :disabled="idx === 0" class="btn btn--ghost btn--sm" aria-label="Pindah ke atas">Naik</button>
                   <button type="button" @click="moveStagedFile(idx, 1)" :disabled="idx === stagedFiles.length - 1" class="btn btn--ghost btn--sm" aria-label="Pindah ke bawah">Turun</button>
                   <button type="button" @click="removeStagedFile(idx)" class="btn btn--ghost btn--sm">Hapus</button>

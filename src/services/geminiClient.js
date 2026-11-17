@@ -120,6 +120,20 @@ export class GeminiApiKeyPool {
     this.cooldowns.delete(this._cooldownKey(key, model));
     this.cooldowns.delete(this._cooldownKey(key, '*'));
     this.cooldowns.delete(key);
+    // Round-robin advance so consecutive calls spread RPM/RPD evenly across all keys
+    if (this.keys.length > 1) {
+      const idx = this.keys.indexOf(key);
+      if (idx !== -1) {
+        this.currentIndex = (idx + 1) % this.keys.length;
+      }
+    }
+  }
+
+  areAllKeysOnCooldown(model = '*') {
+    this.sync();
+    if (this.keys.length === 0) return false;
+    const now = Date.now();
+    return this.keys.every((key) => this._getCooldownUntil(key, model) > now);
   }
 
   reset() {
@@ -284,6 +298,93 @@ export async function countTokensSelectively({ model, contents }) {
   return result?.totalTokens ?? null;
 }
 
+function extractResponseTextAndDiagnostics(response) {
+  let rawText = typeof response?.text === 'string' ? response.text : '';
+  const candidates = Array.isArray(response?.candidates) ? response.candidates : [];
+  const firstCandidate = candidates[0] || null;
+  const finishReason = firstCandidate?.finishReason || null;
+  const blockReason = response?.promptFeedback?.blockReason || null;
+
+  if (!rawText.trim() && Array.isArray(firstCandidate?.content?.parts)) {
+    const fallbackText = firstCandidate.content.parts
+      .filter((part) => typeof part?.text === 'string' && part.thought !== true)
+      .map((part) => part.text)
+      .join('');
+    if (fallbackText.trim()) {
+      rawText = fallbackText;
+    }
+  }
+
+  const diagnosticParts = [];
+  if (blockReason) diagnosticParts.push(`blockReason=${blockReason}`);
+  if (finishReason) diagnosticParts.push(`finishReason=${finishReason}`);
+  if (candidates.length === 0) diagnosticParts.push('candidates=0');
+
+  return {
+    rawText,
+    finishReason,
+    blockReason,
+    diagnosticSuffix: diagnosticParts.length > 0 ? ` (${diagnosticParts.join(', ')})` : '',
+  };
+}
+
+function classifyGeminiCallFailure(err) {
+  const status = Number(err?.status || err?.httpStatus || err?.statusCode || err?.code) || null;
+  const errMsg = String(err?.message || '').toLowerCase();
+
+  if (err?.errorCode === 'OUTPUT_SCHEMA_INVALID' || err?.name === 'ZodError') {
+    return { kind: 'output_invalid', status };
+  }
+
+  if (
+    status === 401 ||
+    status === 403 ||
+    errMsg.includes('api_key_invalid') ||
+    errMsg.includes('permission_denied') ||
+    errMsg.includes('api key not valid')
+  ) {
+    return { kind: 'auth_error', status };
+  }
+
+  if (
+    status === 429 ||
+    errMsg.includes('quota') ||
+    errMsg.includes('resource_exhausted') ||
+    errMsg.includes('rate_limit') ||
+    errMsg.includes('rate limit')
+  ) {
+    const isDaily =
+      errMsg.includes('per day') ||
+      errMsg.includes('per_day') ||
+      errMsg.includes('perday') ||
+      errMsg.includes('daily') ||
+      errMsg.includes('rpd');
+    return { kind: isDaily ? 'daily_quota' : 'rate_limit', status };
+  }
+
+  if (status === 404 || errMsg.includes('not found') || errMsg.includes('not supported')) {
+    return { kind: 'model_unavailable', status };
+  }
+
+  if (
+    status === 500 ||
+    status === 502 ||
+    status === 503 ||
+    status === 504 ||
+    errMsg.includes('overloaded') ||
+    errMsg.includes('unavailable') ||
+    errMsg.includes('internal') ||
+    errMsg.includes('deadline_exceeded') ||
+    errMsg.includes('timeout') ||
+    errMsg.includes('econnreset') ||
+    errMsg.includes('fetch failed')
+  ) {
+    return { kind: 'transient_server', status };
+  }
+
+  return { kind: 'fatal', status };
+}
+
 export async function generateStructuredContent({
   taskType,
   contents,
@@ -318,8 +419,19 @@ export async function generateStructuredContent({
 
   for (let mIdx = 0; mIdx < candidateModels.length; mIdx++) {
     const model = candidateModels[mIdx];
-    const thinkingConfig = buildThinkingConfig(model, effectiveThinkingLevel);
+    const hasMoreModels = mIdx < candidateModels.length - 1;
 
+    // Skip a model whose keys are ALL already on cooldown if a fresher fallback model is available
+    if (hasMoreModels && pool.areAllKeysOnCooldown(model)) {
+      const hasReadyFallback = candidateModels
+        .slice(mIdx + 1)
+        .some((candidate) => !pool.areAllKeysOnCooldown(candidate));
+      if (hasReadyFallback) {
+        continue;
+      }
+    }
+
+    const thinkingConfig = buildThinkingConfig(model, effectiveThinkingLevel);
     const generationConfig = {
       maxOutputTokens,
       responseMimeType: 'application/json',
@@ -328,15 +440,12 @@ export async function generateStructuredContent({
     if (responseSchema) {
       generationConfig.responseSchema = responseSchema;
     }
-
     if (systemInstruction) {
       generationConfig.systemInstruction = systemInstruction;
     }
-
     if (thinkingConfig) {
       generationConfig.thinkingConfig = thinkingConfig;
     }
-
     if (useSearch) {
       generationConfig.tools = [{ googleSearch: {} }];
     }
@@ -346,26 +455,35 @@ export async function generateStructuredContent({
     for (let attempt = 0; attempt < maxAttemptsPerModel; attempt++) {
       const keyInfo = pool.getActiveKeyInfo(model);
       const ai = pool.getClientForKey(keyInfo.key);
+      // On final fallback model, allow 1 retry without strict responseSchema if strict schema returned empty/invalid
+      const activeConfig =
+        !hasMoreModels && attempt > 0 && generationConfig.responseSchema && lastErr?.errorCode === 'OUTPUT_SCHEMA_INVALID'
+          ? (() => {
+              const relaxed = { ...generationConfig };
+              delete relaxed.responseSchema;
+              return relaxed;
+            })()
+          : generationConfig;
 
-      let response;
       try {
+        let response;
         try {
           response = await ai.models.generateContent({
             model,
             contents,
-            config: generationConfig,
+            config: activeConfig,
           });
-        } catch (err) {
-          const errMsg = String(err?.message || '').toLowerCase();
+        } catch (callErr) {
+          const callMsg = String(callErr?.message || '').toLowerCase();
           if (
             useSearch &&
-            generationConfig.responseSchema &&
-            (errMsg.includes('response_schema') ||
-              errMsg.includes('response schema') ||
-              errMsg.includes('grounding') ||
-              errMsg.includes('not supported with'))
+            activeConfig.responseSchema &&
+            (callMsg.includes('response_schema') ||
+              callMsg.includes('response schema') ||
+              callMsg.includes('grounding') ||
+              callMsg.includes('not supported with'))
           ) {
-            const fallbackConfig = { ...generationConfig };
+            const fallbackConfig = { ...activeConfig };
             delete fallbackConfig.responseSchema;
             response = await ai.models.generateContent({
               model,
@@ -373,54 +491,89 @@ export async function generateStructuredContent({
               config: fallbackConfig,
             });
           } else {
+            throw callErr;
+          }
+        }
+
+        const usageMetadata = response?.usageMetadata || null;
+        const { rawText, finishReason, blockReason, diagnosticSuffix } =
+          extractResponseTextAndDiagnostics(response);
+
+        if (!rawText.trim()) {
+          const err = new Error(`Model AI mengembalikan respons kosong${diagnosticSuffix}.`);
+          err.errorCode = 'OUTPUT_SCHEMA_INVALID';
+          err.isEmptyResponse = true;
+          err.finishReason = finishReason;
+          err.blockReason = blockReason;
+          err.usageMetadata = usageMetadata;
+          err.model = model;
+          throw err;
+        }
+
+        let parsedJson;
+        try {
+          parsedJson = cleanAndParseJson(rawText);
+        } catch (parseErr) {
+          const err = new Error(`Output AI bukan JSON valid: ${parseErr.message}`);
+          err.errorCode = 'OUTPUT_SCHEMA_INVALID';
+          err.usageMetadata = usageMetadata;
+          err.model = model;
+          throw err;
+        }
+
+        if (zodSchema) {
+          try {
+            parsedJson = zodSchema.parse(parsedJson);
+          } catch (zodErr) {
+            const issuesSummary = Array.isArray(zodErr?.issues)
+              ? zodErr.issues.map((i) => `${(i.path || []).join('.')}: ${i.message}`).join('; ')
+              : zodErr.message;
+            const err = new Error(`Validasi skema gagal: ${issuesSummary}`);
+            err.errorCode = 'OUTPUT_SCHEMA_INVALID';
+            err.usageMetadata = usageMetadata;
+            err.model = model;
             throw err;
           }
         }
-      } catch (apiErr) {
-        lastErr = apiErr;
-        const status =
-          Number(apiErr?.status || apiErr?.httpStatus || apiErr?.statusCode || apiErr?.code) || null;
-        const errMsg = String(apiErr?.message || '').toLowerCase();
-        const isQuotaOrRateLimit =
-          status === 429 ||
-          errMsg.includes('quota') ||
-          errMsg.includes('resource_exhausted') ||
-          errMsg.includes('rate_limit') ||
-          errMsg.includes('rate limit');
-        const isAuthOrKeyError =
-          status === 401 ||
-          status === 403 ||
-          errMsg.includes('api_key_invalid') ||
-          errMsg.includes('permission_denied') ||
-          errMsg.includes('api key not valid');
-        const isModelUnavailable =
-          status === 404 ||
-          status === 503 ||
-          errMsg.includes('not found') ||
-          errMsg.includes('not supported') ||
-          errMsg.includes('overloaded') ||
-          errMsg.includes('unavailable');
 
-        if (isModelUnavailable && mIdx < candidateModels.length - 1) {
-          shouldFailoverToNextModel = true;
-          break;
+        // Only mark key healthy once output is non-empty, valid JSON, and passes Zod validation
+        pool.markSuccess(keyInfo.key, model);
+
+        return {
+          data: parsedJson,
+          usageMetadata,
+          model,
+          searchGroundingUsed: useSearch,
+          activeKeyIndex: keyInfo.index,
+          totalKeys: keyInfo.total,
+        };
+      } catch (attemptErr) {
+        if (!attemptErr.model) {
+          attemptErr.model = model;
+        }
+        lastErr = attemptErr;
+
+        const { kind } = classifyGeminiCallFailure(attemptErr);
+
+        if (kind === 'model_unavailable') {
+          if (hasMoreModels) {
+            shouldFailoverToNextModel = true;
+            break;
+          }
+          throw attemptErr;
         }
 
-        if (isQuotaOrRateLimit || isAuthOrKeyError) {
-          const isDaily =
-            errMsg.includes('per day') ||
-            errMsg.includes('perday') ||
-            errMsg.includes('daily') ||
-            errMsg.includes('rpd');
-          const cooldownMs = isAuthOrKeyError || isDaily ? 60 * 60 * 1000 : 30 * 1000;
-          const reason = isAuthOrKeyError
+        if (kind === 'auth_error' || kind === 'daily_quota' || kind === 'rate_limit') {
+          const isAuth = kind === 'auth_error';
+          const isDaily = kind === 'daily_quota';
+          const cooldownMs = isAuth || isDaily ? 60 * 60 * 1000 : 30 * 1000;
+          const reason = isAuth
             ? 'key tidak valid / 403'
             : isDaily
               ? 'kuota harian habis (RPD)'
               : 'rate limit sementara (RPM)';
 
-          // Mark cooldown per-model for quota/rate-limit, or global ('*') if key itself is invalid
-          pool.markCooldown(keyInfo.key, cooldownMs, isAuthOrKeyError ? '*' : model);
+          pool.markCooldown(keyInfo.key, cooldownMs, isAuth ? '*' : model);
 
           if (keys.length > 1 && attempt < maxAttemptsPerModel - 1) {
             console.warn(
@@ -429,65 +582,56 @@ export async function generateStructuredContent({
             continue;
           }
 
-          if (mIdx < candidateModels.length - 1) {
+          if (hasMoreModels) {
             shouldFailoverToNextModel = true;
             break;
           }
+          throw attemptErr;
         }
 
-        throw apiErr;
-      }
-
-      pool.markSuccess(keyInfo.key, model);
-
-      const usageMetadata = response?.usageMetadata || null;
-      const rawText = typeof response?.text === 'string' ? response.text : '';
-
-      if (!rawText.trim()) {
-        const err = new Error('Model AI mengembalikan respons kosong.');
-        err.errorCode = 'OUTPUT_SCHEMA_INVALID';
-        err.usageMetadata = usageMetadata;
-        throw err;
-      }
-
-      let parsedJson;
-      try {
-        parsedJson = cleanAndParseJson(rawText);
-      } catch (parseErr) {
-        const err = new Error(`Output AI bukan JSON valid: ${parseErr.message}`);
-        err.errorCode = 'OUTPUT_SCHEMA_INVALID';
-        err.usageMetadata = usageMetadata;
-        throw err;
-      }
-
-      if (zodSchema) {
-        try {
-          parsedJson = zodSchema.parse(parsedJson);
-        } catch (zodErr) {
-          const issuesSummary = Array.isArray(zodErr?.issues)
-            ? zodErr.issues.map((i) => `${(i.path || []).join('.')}: ${i.message}`).join('; ')
-            : zodErr.message;
-          const err = new Error(`Validasi skema gagal: ${issuesSummary}`);
-          err.errorCode = 'OUTPUT_SCHEMA_INVALID';
-          err.usageMetadata = usageMetadata;
-          throw err;
+        if (kind === 'transient_server') {
+          pool.markCooldown(keyInfo.key, 15 * 1000, model);
+          const maxTransientKeyTries = hasMoreModels ? Math.min(2, maxAttemptsPerModel) : maxAttemptsPerModel;
+          if (keys.length > 1 && attempt < maxTransientKeyTries - 1) {
+            console.warn(
+              `[geminiClient] [${model}] Gangguan sementara pada API Key #${keyInfo.index + 1}/${keyInfo.total}. Mencoba API key berikutnya...`
+            );
+            continue;
+          }
+          if (hasMoreModels) {
+            shouldFailoverToNextModel = true;
+            break;
+          }
+          throw attemptErr;
         }
-      }
 
-      return {
-        data: parsedJson,
-        usageMetadata,
-        model,
-        searchGroundingUsed: useSearch,
-        activeKeyIndex: keyInfo.index,
-        totalKeys: keyInfo.total,
-      };
+        if (kind === 'output_invalid') {
+          // Rotate key index without long lockouts, then immediately failover to next model tier
+          pool.markCooldown(keyInfo.key, 15 * 1000, model);
+          if (hasMoreModels) {
+            console.warn(
+              `[geminiClient] [${model}] Output kosong / tidak sesuai skema (${attemptErr.message}). Failover otomatis ke model "${candidateModels[mIdx + 1]}"...`
+            );
+            shouldFailoverToNextModel = true;
+            break;
+          }
+          if (keys.length > 1 && attempt < Math.min(2, maxAttemptsPerModel) - 1) {
+            console.warn(
+              `[geminiClient] [${model}] Output kosong / tidak sesuai skema pada model terakhir. Mencoba API key berikutnya...`
+            );
+            continue;
+          }
+          throw attemptErr;
+        }
+
+        throw attemptErr;
+      }
     }
 
-    if (shouldFailoverToNextModel && mIdx < candidateModels.length - 1) {
+    if (shouldFailoverToNextModel && hasMoreModels) {
       const nextModel = candidateModels[mIdx + 1];
       console.warn(
-        `[geminiClient] Seluruh ${keys.length} API key pada model "${model}" kehabisan kuota / tidak tersedia. Failover otomatis ke model prioritas berikutnya: "${nextModel}"...`
+        `[geminiClient] Model "${model}" gagal atau kehabisan kuota. Failover otomatis ke model prioritas berikutnya: "${nextModel}"...`
       );
       continue;
     }

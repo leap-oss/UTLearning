@@ -2,7 +2,7 @@ process.env.NODE_ENV = 'test';
 import test, { after } from 'node:test';
 import assert from 'node:assert/strict';
 import { createApp } from '../src/app.js';
-import { closeDb } from '../src/db/client.js';
+import { closeDb, describeDbError, extractDbCause, isTransientDbError } from '../src/db/client.js';
 
 after(async () => {
   await closeDb();
@@ -141,4 +141,32 @@ test('GET /js/app.js serves Alpine shell script', async () => {
     assert.match(js, /mathToolbarGroups/);
     assert.match(js, /insertMathSnippet\(/);
   });
+});
+
+test('DB error cause extraction, transient classification, and readable formatting', () => {
+  const aggInner1 = Object.assign(new Error('connect ETIMEDOUT'), { code: 'ETIMEDOUT' });
+  const aggInner2 = Object.assign(new Error('connect ENETUNREACH'), { code: 'ENETUNREACH' });
+  const aggErr = new AggregateError([aggInner1, aggInner2], '');
+  const drizzleNetErr = Object.assign(
+    new Error('Failed query: select "id" from "modules" where "id" = $1\nparams: 2bec107b,1'),
+    { cause: aggErr }
+  );
+
+  assert.equal(extractDbCause(drizzleNetErr).code, 'ETIMEDOUT');
+  assert.equal(isTransientDbError(drizzleNetErr, false), true);
+  assert.match(describeDbError(drizzleNetErr), /Koneksi database Neon gagal atau terputus/);
+  assert.match(describeDbError(drizzleNetErr), /ETIMEDOUT/);
+
+  const resetErr = Object.assign(new Error('Failed query: update "x"'), {
+    cause: Object.assign(new Error('read ECONNRESET'), { code: 'ECONNRESET' }),
+  });
+  assert.equal(isTransientDbError(resetErr, false), false, 'Socket drop should not retry non-readonly writes');
+  assert.equal(isTransientDbError(resetErr, true), true, 'Socket drop should retry safe read queries / connects');
+
+  const schemaErr = Object.assign(new Error('Failed query: select "x" from "modules"'), {
+    cause: Object.assign(new Error('column "x" does not exist'), { code: '42703' }),
+  });
+  assert.equal(isTransientDbError(schemaErr, true), false);
+  assert.match(describeDbError(schemaErr), /42703/);
+  assert.match(describeDbError(schemaErr), /column "x" does not exist/);
 });

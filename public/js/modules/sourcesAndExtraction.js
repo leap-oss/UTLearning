@@ -1,5 +1,9 @@
 window.AppModules = window.AppModules || {};
 
+(() => {
+const ALLOWED_SOURCE_IMAGE_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp']);
+const IMAGE_EXT_RE = /\.(jpe?g|png|webp)$/i;
+
 window.AppModules.sourcesAndExtraction = {
   get unreviewedSourcesCount() {
     const sources = this.activeModule?.sources || [];
@@ -15,36 +19,192 @@ window.AppModules.sourcesAndExtraction = {
     return map[label] || label || 'Materi';
   },
 
-  handleFileSelect(event) {
-    const files = Array.from(event.target.files || []);
-    if (files.length === 0) return;
+  normalizeIncomingImageFile(file, index = 0) {
+    if (!file) return null;
+    const rawType = String(file.type || '').toLowerCase();
+    const mime = rawType === 'image/jpg' ? 'image/jpeg' : rawType;
+    const isGenericName = !file.name || /^image\.(png|jpe?g|webp)$/i.test(file.name);
+    if (!isGenericName && mime === rawType) {
+      return file;
+    }
+    const ext = mime === 'image/jpeg' ? 'jpg' : mime === 'image/webp' ? 'webp' : 'png';
+    const stamp = new Date().toISOString().slice(11, 19).replace(/:/g, '');
+    const targetName = isGenericName ? `clipboard-${stamp}-${index + 1}.${ext}` : file.name;
+    return new File([file], targetName, {
+      type: mime || 'image/png',
+      lastModified: file.lastModified || Date.now(),
+    });
+  },
+
+  extractImagesFromInput(input, { allowAnyImage = false } = {}) {
+    if (!input) return { accepted: [], rejectedCount: 0 };
+
+    const rawList = [];
+    if (input.items && typeof input.items.length === 'number') {
+      for (const item of Array.from(input.items)) {
+        if (item.kind === 'file') {
+          const f = item.getAsFile();
+          if (f) rawList.push(f);
+        }
+      }
+    }
+    if (rawList.length === 0) {
+      const fileSource = input.files ? input.files : input;
+      if (fileSource && typeof fileSource.length === 'number') {
+        rawList.push(...Array.from(fileSource));
+      } else if (Array.isArray(input)) {
+        rawList.push(...input);
+      }
+    }
+
+    const accepted = [];
+    let rejectedCount = 0;
+
+    rawList.forEach((rawFile, idx) => {
+      const rawType = String(rawFile.type || '').toLowerCase();
+      const mime = rawType === 'image/jpg' ? 'image/jpeg' : rawType;
+      const isAllowed = allowAnyImage
+        ? mime.startsWith('image/') || IMAGE_EXT_RE.test(rawFile.name || '')
+        : ALLOWED_SOURCE_IMAGE_TYPES.has(mime) || (!mime && IMAGE_EXT_RE.test(rawFile.name || ''));
+
+      if (isAllowed) {
+        accepted.push(this.normalizeIncomingImageFile(rawFile, idx));
+      } else {
+        rejectedCount += 1;
+      }
+    });
+
+    return { accepted, rejectedCount };
+  },
+
+  handleDropzoneDragLeave(event, stateKey) {
+    if (event.relatedTarget && event.currentTarget?.contains(event.relatedTarget)) {
+      return;
+    }
+    this[stateKey] = false;
+  },
+
+  stageSourceFiles(input, origin = 'picker') {
+    const { accepted, rejectedCount } = this.extractImagesFromInput(input, { allowAnyImage: false });
+
+    if (accepted.length === 0) {
+      if (rejectedCount > 0) {
+        this.showError('Hanya gambar JPEG, PNG, atau WebP yang didukung.');
+      }
+      return 0;
+    }
 
     const MAX_FILES_PER_REQUEST = 15;
     const remainingSlots = MAX_FILES_PER_REQUEST - this.stagedFiles.length;
     if (remainingSlots <= 0) {
       this.showError(`Maksimal ${MAX_FILES_PER_REQUEST} gambar dalam 1 request ekstraksi OCR.`);
-      event.target.value = '';
-      return;
+      return 0;
     }
 
-    const acceptedFiles = files.slice(0, remainingSlots);
-    if (files.length > remainingSlots) {
-      this.showError(`Maksimal ${MAX_FILES_PER_REQUEST} gambar per request ekstraksi. ${files.length - remainingSlots} gambar terakhir tidak dimasukkan.`);
-    }
-
+    const acceptedFiles = accepted.slice(0, remainingSlots);
     const existingCount = (this.activeModule?.sources?.length || 0) + this.stagedFiles.length;
+
     acceptedFiles.forEach((file, idx) => {
       const previewUrl = URL.createObjectURL(file);
       this.stagedFiles.push({
         id: `${Date.now()}-${idx}-${Math.random().toString(36).slice(2, 7)}`,
         file,
         previewUrl,
-        label: 'materi',
         pageOrder: existingCount + idx + 1,
       });
     });
 
-    event.target.value = '';
+    if (accepted.length > remainingSlots) {
+      this.showError(
+        `Maksimal ${MAX_FILES_PER_REQUEST} gambar per request ekstraksi. ${accepted.length - remainingSlots} gambar terakhir tidak dimasukkan.`
+      );
+    } else if (rejectedCount > 0) {
+      this.showError(`${acceptedFiles.length} gambar ditambahkan, ${rejectedCount} file non-gambar diabaikan.`);
+    } else if (origin === 'paste') {
+      this.showNotice(
+        `${acceptedFiles.length} gambar ditempel dari clipboard (total antrean ${this.stagedFiles.length}/15).`
+      );
+    } else if (origin === 'drop') {
+      this.showNotice(
+        `${acceptedFiles.length} gambar ditambahkan lewat drag & drop (total antrean ${this.stagedFiles.length}/15).`
+      );
+    }
+
+    return acceptedFiles.length;
+  },
+
+  handleFileSelect(event) {
+    const files = event.target?.files;
+    if (files && files.length > 0) {
+      this.stageSourceFiles(files, 'picker');
+    }
+    if (event.target) {
+      event.target.value = '';
+    }
+  },
+
+  handleSourceDrop(event) {
+    this.isSourceDragOver = false;
+    this.stageSourceFiles(event.dataTransfer, 'drop');
+  },
+
+  async pasteSourceFromClipboard() {
+    if (!navigator.clipboard?.read) {
+      this.showError('Browser tidak mendukung tombol tempel otomatis. Silakan tekan Ctrl+V langsung pada halaman ini.');
+      return;
+    }
+    try {
+      const clipboardItems = await navigator.clipboard.read();
+      const files = [];
+      for (const item of clipboardItems) {
+        const mime = item.types.find((t) => ALLOWED_SOURCE_IMAGE_TYPES.has(t));
+        if (!mime) continue;
+        const blob = await item.getType(mime);
+        const ext = mime === 'image/jpeg' ? 'jpg' : mime === 'image/webp' ? 'webp' : 'png';
+        files.push(new File([blob], `clipboard-${Date.now()}-${files.length + 1}.${ext}`, { type: mime }));
+      }
+      if (files.length === 0) {
+        this.showError('Clipboard tidak berisi gambar (PNG/JPEG/WebP). Ambil tangkapan layar dulu lalu coba lagi.');
+        return;
+      }
+      this.stageSourceFiles(files, 'paste');
+    } catch {
+      this.showError('Akses tombol clipboard diblokir browser. Cukup tekan Ctrl+V langsung pada halaman ini.');
+    }
+  },
+
+  handleGlobalImagePaste(event) {
+    if (this.showCourseModal || this.showModuleModal || this.confirmDialog?.open) {
+      return;
+    }
+    const clipboard = event.clipboardData;
+    if (!clipboard) return;
+
+    const isModuleSourcesView =
+      this.currentView === 'module' && this.moduleTab === 'sources' && Boolean(this.activeModule);
+    const isEmptyCourseTocView =
+      this.currentView === 'course' &&
+      Boolean(this.activeCourse) &&
+      (!this.activeCourse.modules || this.activeCourse.modules.length === 0) &&
+      !this.isAutoMappingToc;
+
+    if (!isModuleSourcesView && !isEmptyCourseTocView) {
+      return;
+    }
+
+    const { accepted } = this.extractImagesFromInput(clipboard, {
+      allowAnyImage: isEmptyCourseTocView,
+    });
+    if (accepted.length === 0) {
+      return;
+    }
+
+    event.preventDefault();
+    if (isModuleSourcesView) {
+      this.stageSourceFiles(accepted, 'paste');
+    } else if (isEmptyCourseTocView) {
+      this.handleTocImageUpload({ target: { files: accepted, value: '' } });
+    }
   },
 
   moveStagedFile(index, direction) {
@@ -84,7 +244,6 @@ window.AppModules.sourcesAndExtraction = {
     const formData = new FormData();
     for (const item of this.stagedFiles) {
       formData.append('images', item.file);
-      formData.append('labels', item.label);
       formData.append('pageOrders', String(item.pageOrder));
     }
 
@@ -245,3 +404,4 @@ window.AppModules.sourcesAndExtraction = {
     };
   },
 };
+})();

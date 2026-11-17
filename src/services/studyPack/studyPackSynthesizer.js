@@ -126,7 +126,7 @@ ${sourceBlocks}
 
 Instruksi Khusus Batch ${bIdx + 1} (ZERO COMPRESSION — MAKSIMALKAN KUOTA TOKEN):
 1. Inventarisasi menyeluruh seluruh paragraf Rangkuman, Materi, dan seluruh butir soal Tes Formatif pada sumber ini.
-2. Susun topik bahan belajar yang SANGAT LENGKAP, PANJANG, dan MENDALAM terpisah per Kegiatan Belajar (${batchKbTitles} — hasilkan tepat ${batch.kbs.length} objek di dalam array "topics", masing-masing minimal 5-8 paragraf di "detailedExplanation"). DILARANG mengompresi atau meringkas pendek materi karena kuota output token sangat besar (65.536 token)!
+2. Susun topik bahan belajar yang SANGAT LENGKAP, PANJANG, dan MENDALAM terpisah per Kegiatan Belajar (${batchKbTitles} — hasilkan tepat ${batch.kbs.length} objek di dalam array "topics", masing-masing minimal 5-8 paragraf di "detailedExplanation" yang dipisahkan baris kosong "\\n\\n" antarparagraf). DILARANG menggabungkan banyak paragraf menjadi 1 blok teks tanpa "\\n\\n", dan DILARANG mengompresi materi karena kuota output token sangat besar (65.536 token)!
 3. Dilarang melewatkan satupun konsep, faktor, rumus, atau pengecualian ("kecuali...") dari seluruh butir soal Tes Formatif.
 ${
   isFinal

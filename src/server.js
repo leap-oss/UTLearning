@@ -1,5 +1,6 @@
 import { createApp } from './app.js';
 import { getEnvConfig } from './config/env.js';
+import { describeDbError } from './db/client.js';
 import { recoverInterruptedJobs } from './services/aiJobRepository.js';
 
 const config = getEnvConfig();
@@ -13,7 +14,7 @@ async function startServer() {
         console.log(`[ut-learning] Marked ${recovered} unfinished AI job(s) as interrupted.`);
       }
     } catch (err) {
-      console.warn('[ut-learning] Could not run startup job recovery:', err.message);
+      console.warn('[ut-learning] Could not run startup job recovery:', describeDbError(err));
     }
   }
 

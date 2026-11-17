@@ -380,7 +380,7 @@ PRINSIP WAJIB (ZERO COMPRESSION & MAKSIMALISASI DETAIL):
 1. DILARANG KERAS MENGOMPRESI ATAU MERINGKAS PENDEK (GUNAKAN KUOTA TOKEN SEMAKSIMAL MUNGKIN):
    - Anda memiliki kuota token output yang sangat besar (hingga 65.536 token output / 250K TPM) dalam satu request tunggal ini!
    - JANGAN PERNAH mengompresi, menyingkat, atau memangkas kedalaman penjelasan meskipun modul ini memiliki banyak Kegiatan Belajar (KB 1, KB 2, KB 3, dst.) dalam 1 request sekaligus!
-   - Setiap Kegiatan Belajar WAJIB diuraikan secara sangat mendalam, panjang, komprehensif, dan tuntas (minimal 5-8 paragraf naratif yang kaya dan mendetail per Kegiatan Belajar di "detailedExplanation"), bukan sekadar ringkasan permukaan.
+   - Setiap Kegiatan Belajar WAJIB diuraikan secara sangat mendalam, panjang, komprehensif, dan tuntas (minimal 5-8 paragraf naratif yang kaya dan mendetail per Kegiatan Belajar di "detailedExplanation", dipisahkan secara eksplisit dengan satu baris kosong "\\n\\n" antarparagraf), bukan sekadar ringkasan permukaan.
 2. BEDAH TUNTAS & REVERSE-ENGINEERING SELURUH SOAL TES FORMATIF (100% CAKUPAN WAJIB):
    - Mahasiswa sering kali HANYA mengunggah halaman "Rangkuman" dan "Tes Formatif" (tanpa mengunggah puluhan halaman isi bab).
    - Oleh karena itu, banyak konsep, sifat teorema, atau langkah penyelesaian spesifik yang diujikan di soal "Tes Formatif" TIDAK tertulis di halaman "Rangkuman" singkat.
@@ -402,7 +402,8 @@ PRINSIP WAJIB (ZERO COMPRESSION & MAKSIMALISASI DETAIL):
    - "topicLabel": Judul Kegiatan Belajar yang jelas dan diawali nomor KB (misal: "Kegiatan Belajar 1: ...").
    - "learningObjectives": 3-5 sasaran pembelajaran spesifik yang merangkum Rangkuman, Materi, & Tes Formatif KB tersebut.
    - "coreConcepts": Seluruh konsep/definisi/sifat kunci dari Rangkuman, Materi, & seluruh nomor Tes Formatif.
-   - "detailedExplanation": Uraian penjelasan mendalam dan panjang lebar tanpa dikompresi (minimal 5-8 paragraf terstruktur yang mencakup semua konsep & rumus di Rangkuman/Materi + semua materi yang ditanyakan pada setiap nomor soal Tes Formatif).
+   - "detailedExplanation": Uraian penjelasan mendalam dan panjang lebar tanpa dikompresi (minimal 5-8 paragraf terstruktur yang WAJIB dipisahkan dengan "\\n\\n" antarparagraf agar rapi dibaca — DILARANG menggabungkan banyak paragraf menjadi 1 blok teks tanpa pemisah "\\n\\n"; mencakup semua konsep & rumus di Rangkuman/Materi + semua materi yang ditanyakan pada setiap nomor soal Tes Formatif).
+   - "aiExplanation": Penjelasan intuitif/analogi bantuan AI; jika terdiri atas lebih dari 1 paragraf (>3 kalimat), pisahkan pula dengan "\\n\\n" antarparagraf.
    - "conceptRelationships": Keterhubungan atau ketergantungan antar konsep/teorema.
    - "comparisons": Perbandingan terstruktur (itemA, itemB, distinction) untuk istilah/notasi/rumus yang berpotensi tertukar.
    - "processesOrStages": Alur langkah penyelesaian soal, pembuktian, atau tahapan prosedural.

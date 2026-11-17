@@ -150,17 +150,31 @@
 
     <template x-if="!activeCourse?.modules || activeCourse.modules.length === 0">
       <div class="stack-md">
-        <label class="dropzone" style="cursor: pointer;">
-          <div class="stack-2xs">
+        <div
+          class="dropzone"
+          :class="{ 'dropzone--active': isTocDragOver }"
+          @dragenter.prevent="isTocDragOver = true"
+          @dragover.prevent="isTocDragOver = true"
+          @dragleave.prevent="handleDropzoneDragLeave($event, 'isTocDragOver')"
+          @drop.prevent="handleTocDrop($event)"
+        >
+          <div class="stack-2xs" style="min-width: 0; flex: 1 1 18rem;">
             <div class="cluster cluster--tight" style="align-items: center;">
-              <span class="sub-title">Pemetaan Otomatis dari Daftar Isi BMP</span>
+              <span
+                class="sub-title"
+                x-text="isTocDragOver ? 'Lepaskan foto Daftar Isi di sini' : 'Pemetaan Otomatis dari Daftar Isi BMP'"
+              ></span>
               <span class="tag">AI Vision</span>
             </div>
-            <p class="meta">
-              Unggah 1–2 foto halaman <strong>Daftar Isi</strong> Buku Materi Pokok. AI akan langsung memetakan seluruh nomor modul, judul materi resmi, dan topik Kegiatan Belajar tanpa perlu input manual.
+            <p class="meta" id="course-toc-upload-hint">
+              Unggah, seret &amp; lepas, atau tekan <strong>Ctrl+V</strong> untuk 1–2 foto halaman <strong>Daftar Isi</strong> Buku Materi Pokok. AI akan langsung memetakan seluruh nomor modul, judul materi resmi, dan topik Kegiatan Belajar.
             </p>
           </div>
-          <span class="btn btn--primary btn--sm" :class="{ 'opacity-60 pointer-events-none': isAutoMappingToc }">
+          <label
+            for="course-toc-file-input"
+            class="btn btn--primary btn--sm"
+            :class="{ 'opacity-60 pointer-events-none': isAutoMappingToc }"
+          >
             <span class="spinner" aria-hidden="true" x-show="isAutoMappingToc"></span>
             <svg x-show="!isAutoMappingToc" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
               <path d="M3 7V5a2 2 0 0 1 2-2h2"/>
@@ -171,16 +185,18 @@
             </svg>
             <span x-show="!isAutoMappingToc">Pilih Foto Daftar Isi</span>
             <span x-show="isAutoMappingToc">Sedang Menganalisis...</span>
-          </span>
+          </label>
           <input
+            id="course-toc-file-input"
             type="file"
             accept="image/*"
             multiple
-            class="sr-only"
+            aria-describedby="course-toc-upload-hint"
+            class="visually-hidden"
             @change="handleTocImageUpload($event)"
             :disabled="isAutoMappingToc"
           />
-        </label>
+        </div>
 
         <div style="display: flex; align-items: center; justify-content: center; gap: var(--space-xs);">
           <span class="meta" style="font-size: var(--text-xs);">atau masukkan modul secara mandiri:</span>

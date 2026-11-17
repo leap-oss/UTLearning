@@ -275,6 +275,71 @@ window.AppModules.mathAndFormatters = {
     return html;
   },
 
+  splitCollapsedProseLine(line) {
+    if (!line || line.length <= 520 || this.isTableRowLine(line)) return line;
+    if (/^\s*@@(?:FLOWCHART|CODEBLOCK)_\d+@@\s*$/.test(line)) return line;
+
+    const ABBR_RE = /(?:^|\s|\()(?:mis|dst|dll|dkk|hal|no|dr|prof|s\.d|a\.n|u\.p|e\.g|i\.e|vs|[A-Z]|[1-9]\d?)\.$/i;
+    const TRANSITION_RE =
+      /^(?:Sementara itu|Selain itu|Berbeda dengan|Secara umum|Pada (?:sistem operasi|metode|konsep|tahap|bagian)|Dalam (?:konteks|manajemen|hal)|Di sisi lain|Untuk (?:mengubah|menggunakan|mengatur|membuat|mengenali)|Sebagai (?:contoh|pembanding)|Namun|Oleh karena itu|Dengan demikian|Apabila|Terdapat|Konfigurasi)\b/i;
+
+    const sentences = [];
+    let start = 0;
+    let parenDepth = 0;
+    for (let i = 0; i < line.length; i++) {
+      const ch = line[i];
+      if (ch === '(') {
+        parenDepth++;
+      } else if (ch === ')' && parenDepth > 0) {
+        parenDepth--;
+      } else if ((ch === '.' || ch === '!' || ch === '?') && parenDepth === 0) {
+        let endIdx = i + 1;
+        if (endIdx < line.length && /["'”’]/.test(line[endIdx])) endIdx++;
+        if (endIdx < line.length && /[ \t]/.test(line[endIdx])) {
+          const prefix = line.slice(start, i + 1);
+          const rest = line.slice(endIdx).replace(/^[ \t]+/, '');
+          if (/^[A-ZÀ-ÖØ-Þ]/.test(rest) && !ABBR_RE.test(prefix)) {
+            sentences.push(line.slice(start, endIdx).trim());
+            start = line.length - rest.length;
+            i = start - 1;
+          }
+        }
+      }
+    }
+    const tail = line.slice(start).trim();
+    if (tail) sentences.push(tail);
+    if (sentences.length < 3) return line;
+
+    const paragraphs = [];
+    let current = [];
+    let currentLen = 0;
+    for (const s of sentences) {
+      const cleanStart = s.replace(/^@@MATH_TOKEN_\d+@@\s*/, '');
+      const startsTopic = current.length >= 2 && currentLen >= 220 && TRANSITION_RE.test(cleanStart);
+      const tooLong = current.length >= 3 && (currentLen + s.length > 580 || current.length >= 5);
+      if (current.length > 0 && (startsTopic || tooLong)) {
+        paragraphs.push(current.join(' '));
+        current = [s];
+        currentLen = s.length;
+      } else {
+        current.push(s);
+        currentLen += s.length + 1;
+      }
+    }
+    if (current.length > 0) paragraphs.push(current.join(' '));
+
+    if (
+      paragraphs.length >= 2 &&
+      paragraphs[paragraphs.length - 1].length < 140 &&
+      paragraphs[paragraphs.length - 2].length < 520
+    ) {
+      const last = paragraphs.pop();
+      paragraphs[paragraphs.length - 1] += ` ${last}`;
+    }
+
+    return paragraphs.join('\n\n');
+  },
+
   normalizeCollapsedMathLayout(rawText) {
     let s = String(rawText || '')
       // Repair corrupted LaTeX escapes where \n, \f, \b, \t inside JSON became control characters
@@ -309,6 +374,13 @@ window.AppModules.mathAndFormatters = {
     s = s.replace(/([^\n])[ \t]+(Soal\s+nomor\s+\d+\)?)/g, '$1\n\n$2');
     // Put collapsed numbered items "1) ...", "2) ...", ..., "20) ..." on their own line (only horizontal spaces, never eating blank lines)
     s = s.replace(/([^\n])(?<!nomor|dan)[ \t]+([1-9]\d?\)[ \t]+(?:[A-Z$(\\]|@@MATH_TOKEN_|a\.|b\.|c\.))/g, '$1\n\n$2');
+
+    if (s.length > 520) {
+      s = s
+        .split('\n')
+        .map((line) => this.splitCollapsedProseLine(line))
+        .join('\n');
+    }
 
     if (protectedMath.length > 0) {
       s = s.replace(/@@MATH_TOKEN_(\d+)@@/g, (_m, idx) => protectedMath[Number(idx)] || '');

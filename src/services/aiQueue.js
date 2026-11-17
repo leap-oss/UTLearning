@@ -259,7 +259,7 @@ export class AiJobQueue {
             jobId: job.id,
             courseId,
             moduleId,
-            model,
+            model: err?.model || model,
             taskType: operation,
             status: 'failed',
             httpStatus: classified.httpStatus,

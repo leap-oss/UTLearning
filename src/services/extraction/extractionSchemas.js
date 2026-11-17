@@ -24,6 +24,13 @@ export function isUtBoilerplateScoringFormula(text) {
 export const extractedPageSchema = z.object({
   sourceImageId: z.string(),
   pageOrder: z.number().int().min(1),
+  pageType: z
+    .string()
+    .optional()
+    .transform((val) => {
+      const normalized = String(val || '').toLowerCase().trim();
+      return SOURCE_LABELS.includes(normalized) ? normalized : undefined;
+    }),
   pageTitle: z.string().optional().default(''),
   extractedText: z
     .string()
@@ -85,10 +92,14 @@ export const EXTRACTION_RESPONSE_JSON_SCHEMA = {
       type: 'ARRAY',
       items: {
         type: 'OBJECT',
-        required: ['sourceImageId', 'pageOrder', 'extractedText', 'needsReview'],
+        required: ['sourceImageId', 'pageOrder', 'pageType', 'extractedText', 'needsReview'],
         properties: {
           sourceImageId: { type: 'STRING' },
           pageOrder: { type: 'INTEGER' },
+          pageType: {
+            type: 'STRING',
+            enum: ['materi', 'rangkuman', 'tes_formatif'],
+          },
           pageTitle: { type: 'STRING' },
           extractedText: { type: 'STRING' },
           sections: {
@@ -269,8 +280,9 @@ export async function validateAndPrepareUploadedImages(files = [], metadata = {}
     }
 
     const checksum = crypto.createHash('sha256').update(buffer).digest('hex');
-    const rawLabel = String(labelsInput[i] || 'materi').toLowerCase().trim();
-    const label = SOURCE_LABELS.includes(rawLabel) ? rawLabel : 'materi';
+    const rawLabel = String(labelsInput[i] || '').toLowerCase().trim();
+    const hasExplicitLabel = SOURCE_LABELS.includes(rawLabel);
+    const label = hasExplicitLabel ? rawLabel : 'materi';
     const parsedOrder = Number.parseInt(String(ordersInput[i] ?? i + 1), 10);
     const pageOrder = Number.isInteger(parsedOrder) && parsedOrder >= 1 ? parsedOrder : i + 1;
 
@@ -281,6 +293,7 @@ export async function validateAndPrepareUploadedImages(files = [], metadata = {}
       fileSize: file.size,
       checksum,
       label,
+      hasExplicitLabel,
       pageOrder,
     });
   }

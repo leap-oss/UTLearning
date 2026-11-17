@@ -30,7 +30,9 @@ window.AppModules.state = {
   loadingModuleDetail: false,
 
   // Upload staging state
-  stagedFiles: [], // { id, file, previewUrl, label, pageOrder }
+  stagedFiles: [], // { id, file, previewUrl, pageOrder }
+  isSourceDragOver: false,
+  isTocDragOver: false,
   editingSourceId: null,
   sourceEditForm: {
     label: 'materi',
@@ -134,6 +136,10 @@ window.AppModules.state = {
     this.$watch('showModuleModal', (open) => open && this.focusFirstField('#module-num-input'));
     this.$watch('confirmDialog.open', (open) => open && this.focusFirstField('#confirm-cancel-btn'));
     this.setupScrollTopObserver?.();
+    if (!this._pasteListenerAttached) {
+      this._pasteListenerAttached = true;
+      window.addEventListener('paste', (event) => this.handleGlobalImagePaste(event));
+    }
     await this.loadCourses();
     this.refreshSystemStatus(this.currentView === 'system');
   },

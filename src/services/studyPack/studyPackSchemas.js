@@ -31,6 +31,97 @@ function normalizeDifficulty(val) {
   return 'medium';
 }
 
+const PROSE_ABBR_RE = /(?:^|\s|\()(?:mis|dst|dll|dkk|hal|no|dr|prof|s\.d|a\.n|u\.p|e\.g|i\.e|vs|[A-Z]|[1-9]\d?)\.$/i;
+const PROSE_TRANSITION_RE =
+  /^(?:Sementara itu|Selain itu|Berbeda dengan|Secara umum|Pada (?:sistem operasi|metode|konsep|tahap|bagian)|Dalam (?:konteks|manajemen|hal)|Di sisi lain|Untuk (?:mengubah|menggunakan|mengatur|membuat|mengenali)|Sebagai (?:contoh|pembanding)|Namun|Oleh karena itu|Dengan demikian|Apabila|Terdapat|Konfigurasi)\b/i;
+
+function splitLongProseLine(line) {
+  if (!line || line.length <= 520 || /^\s*\|/.test(line) || /^\s*@@PROT_\d+@@\s*$/.test(line)) {
+    return line;
+  }
+
+  const sentences = [];
+  let start = 0;
+  let parenDepth = 0;
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i];
+    if (ch === '(') parenDepth++;
+    else if (ch === ')' && parenDepth > 0) parenDepth--;
+    else if ((ch === '.' || ch === '!' || ch === '?') && parenDepth === 0) {
+      let endIdx = i + 1;
+      if (endIdx < line.length && /["'”’]/.test(line[endIdx])) endIdx++;
+      if (endIdx < line.length && /[ \t]/.test(line[endIdx])) {
+        const prefix = line.slice(start, i + 1);
+        const rest = line.slice(endIdx).replace(/^[ \t]+/, '');
+        if (/^[A-ZÀ-ÖØ-Þ]/.test(rest) && !PROSE_ABBR_RE.test(prefix)) {
+          sentences.push(line.slice(start, endIdx).trim());
+          start = line.length - rest.length;
+          i = start - 1;
+        }
+      }
+    }
+  }
+  const tail = line.slice(start).trim();
+  if (tail) sentences.push(tail);
+  if (sentences.length < 3) return line;
+
+  const paragraphs = [];
+  let current = [];
+  let currentLen = 0;
+  for (const s of sentences) {
+    const cleanStart = s.replace(/^@@PROT_\d+@@\s*/, '');
+    const startsTopic = current.length >= 2 && currentLen >= 220 && PROSE_TRANSITION_RE.test(cleanStart);
+    const tooLong = current.length >= 3 && (currentLen + s.length > 580 || current.length >= 5);
+    if (current.length > 0 && (startsTopic || tooLong)) {
+      paragraphs.push(current.join(' '));
+      current = [s];
+      currentLen = s.length;
+    } else {
+      current.push(s);
+      currentLen += s.length + 1;
+    }
+  }
+  if (current.length > 0) paragraphs.push(current.join(' '));
+
+  if (
+    paragraphs.length >= 2 &&
+    paragraphs[paragraphs.length - 1].length < 140 &&
+    paragraphs[paragraphs.length - 2].length < 520
+  ) {
+    const last = paragraphs.pop();
+    paragraphs[paragraphs.length - 1] += ` ${last}`;
+  }
+
+  return paragraphs.join('\n\n');
+}
+
+/**
+ * Splits giant un-paragraphed AI prose blocks into clean `\n\n` paragraphs while preserving code, tables, and math.
+ */
+export function ensureReadableParagraphs(rawText) {
+  const text = String(rawText || '').trim();
+  if (text.length <= 520) return text;
+
+  const protectedBlocks = [];
+  const masked = text.replace(
+    /```[\s\S]*?```|\$\$[\s\S]+?\$\$|\\\[[\s\S]+?\\\]|\$(?!\$)(?:\\.|[^$\\\n])+\$|\\\([\s\S]+?\\\)/g,
+    (match) => {
+      const idx = protectedBlocks.length;
+      protectedBlocks.push(match);
+      return `@@PROT_${idx}@@`;
+    }
+  );
+
+  const formatted = masked
+    .split('\n')
+    .map((line) => splitLongProseLine(line))
+    .join('\n');
+
+  return protectedBlocks.length > 0
+    ? formatted.replace(/@@PROT_(\d+)@@/g, (_m, idx) => protectedBlocks[Number(idx)] || '')
+    : formatted;
+}
+
 const sourceRefsSchema = z
   .array(z.string())
   .optional()
@@ -212,16 +303,19 @@ export const topicLearningMaterialSchema = z
     aiExplanation: z.string().trim().optional().default(''),
   })
   .transform((t) => {
-    const detailed =
-      t.detailedExplanation || t.bmpSummary || 'Uraian materi konsep dari sumber BMP.';
-    const summary =
-      t.bmpSummary || t.detailedExplanation || 'Intisari konsep dari sumber BMP.';
+    const detailed = ensureReadableParagraphs(
+      t.detailedExplanation || t.bmpSummary || 'Uraian materi konsep dari sumber BMP.'
+    );
+    const summary = ensureReadableParagraphs(
+      t.bmpSummary || t.detailedExplanation || 'Intisari konsep dari sumber BMP.'
+    );
     return {
       ...t,
       topicLabel: t.topicLabel || t.title || 'Topik Utama',
       title: t.title || t.topicLabel || 'Topik Utama',
       bmpSummary: summary,
       detailedExplanation: detailed,
+      aiExplanation: ensureReadableParagraphs(t.aiExplanation || ''),
     };
   });
 
