@@ -62,6 +62,7 @@ window.AppModules.mathAndFormatters = {
     const map = {
       initial: 'Kuis Awal Study Pack',
       practice: 'Latihan Tambahan',
+      warmup: 'Pemanasan Kilat',
       remedial: 'Remedial Terfokus',
       exam_simulation: 'Simulasi UAS Komprehensif',
     };

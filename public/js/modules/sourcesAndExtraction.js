@@ -250,18 +250,21 @@ window.AppModules.sourcesAndExtraction = {
     const idemKey = this.generateIdempotencyKey('extract');
 
     try {
-      const res = await fetch(`/api/modules/${this.activeModule.id}/sources/extract`, {
-        method: 'POST',
-        headers: {
-          'Idempotency-Key': idemKey,
-          Accept: 'application/json',
+      const { ok, status, data } = await this.fetchJson(
+        `/api/modules/${this.activeModule.id}/sources/extract`,
+        {
+          method: 'POST',
+          headers: {
+            'Idempotency-Key': idemKey,
+            Accept: 'application/json',
+          },
+          body: formData,
         },
-        body: formData,
-      });
+        0
+      );
 
-      const data = await res.json();
-      if (!res.ok) {
-        throw new Error(data.message || 'Gagal mengirim gambar untuk diekstrak.');
+      if (!ok) {
+        throw new Error(this.extractApiErrorMessage(data, status, 'Gagal mengirim gambar untuk diekstrak.'));
       }
 
       this.clearStagedFiles();

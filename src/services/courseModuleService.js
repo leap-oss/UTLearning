@@ -1,6 +1,7 @@
 import { eq, and, asc, desc, ne, inArray, gte } from 'drizzle-orm';
 import { z } from 'zod';
 import { getDb } from '../db/client.js';
+import { recoverStaleJobs } from './aiJobRepository.js';
 import {
   courses,
   modules,
@@ -432,6 +433,7 @@ export async function createModule(courseId, input) {
 }
 
 export async function getModuleDetail(moduleId) {
+  await recoverStaleJobs().catch(() => {});
   const db = getDb();
 
   const [modCourseRows, sources, packs, allQSets, submittedAttempts] = await Promise.all([

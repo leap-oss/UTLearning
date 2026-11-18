@@ -20,12 +20,15 @@ import {
 import {
   getQuestionSetWithoutAnswerKey,
   submitQuizAttempt,
+  checkSingleQuestionAnswer,
+  createWarmupQuizSet,
   getAttemptReviewById,
   enqueueRemedialGeneration,
   enqueueCourseExamSimulation,
   getModuleProgress,
   getCourseProgress,
 } from '../services/quizAndRemedialService.js';
+import { getDailyStudyFocus } from '../services/studyFocusService.js';
 
 const uploadTmpDir = path.join(os.tmpdir(), 'ut-learning-uploads');
 
@@ -369,6 +372,81 @@ export function createLearningRouter({
       return res.status(500).json({
         error: 'DB_ERROR',
         message: 'Gagal menilai dan menyimpan hasil kuis.',
+      });
+    }
+  });
+
+  // POST /api/question-sets/:questionSetId/check-question
+  router.post('/question-sets/:questionSetId/check-question', async (req, res) => {
+    const parsedId = uuidSchema.safeParse(req.params.questionSetId);
+    if (!parsedId.success) {
+      return res.status(400).json({
+        error: 'INVALID_QUESTION_SET_ID',
+        message: 'Format questionSetId tidak valid.',
+      });
+    }
+
+    try {
+      const check = await checkSingleQuestionAnswer(parsedId.data, req.body || {});
+      return res.status(200).json({ check });
+    } catch (err) {
+      if (err?.name === 'ZodError') {
+        return res.status(400).json({
+          error: 'VALIDATION_ERROR',
+          message: formatZodError(err),
+        });
+      }
+      if (err?.statusCode) {
+        return res.status(err.statusCode).json({
+          error: err.errorCode || 'CHECK_QUESTION_ERROR',
+          message: err.message,
+        });
+      }
+      return res.status(500).json({
+        error: 'DB_ERROR',
+        message: 'Gagal memeriksa jawaban soal.',
+      });
+    }
+  });
+
+  // POST /api/modules/:moduleId/warmup-quiz
+  router.post('/modules/:moduleId/warmup-quiz', async (req, res) => {
+    const parsedId = uuidSchema.safeParse(req.params.moduleId);
+    if (!parsedId.success) {
+      return res.status(400).json({
+        error: 'INVALID_MODULE_ID',
+        message: 'Format moduleId tidak valid.',
+      });
+    }
+
+    try {
+      const maxQuestions = Number(req.body?.maxQuestions) || 5;
+      const questionSet = await createWarmupQuizSet(parsedId.data, { maxQuestions });
+      return res.status(201).json({ questionSet });
+    } catch (err) {
+      if (err?.statusCode) {
+        return res.status(err.statusCode).json({
+          error: err.errorCode || 'WARMUP_QUIZ_ERROR',
+          message: err.message,
+        });
+      }
+      return res.status(500).json({
+        error: 'DB_ERROR',
+        message: 'Gagal menyusun kuis pemanasan.',
+      });
+    }
+  });
+
+  // GET /api/dashboard/focus
+  router.get('/dashboard/focus', async (req, res) => {
+    try {
+      const timeZone = typeof req.query?.tz === 'string' ? req.query.tz : undefined;
+      const focus = await getDailyStudyFocus({ timeZone });
+      return res.status(200).json({ focus });
+    } catch (err) {
+      return res.status(500).json({
+        error: 'DB_ERROR',
+        message: 'Gagal menyusun fokus belajar harian.',
       });
     }
   });

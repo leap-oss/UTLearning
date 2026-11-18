@@ -1,4 +1,4 @@
-import { eq, and, desc, inArray, gte, sql } from 'drizzle-orm';
+import { eq, and, desc, inArray, gte, lt, isNull, sql } from 'drizzle-orm';
 import { getDb } from '../db/client.js';
 import {
   aiGenerationJobs,
@@ -240,6 +240,46 @@ export async function recoverInterruptedJobs() {
     .returning({ id: aiGenerationJobs.id });
 
   return updated.length;
+}
+
+let lastStaleRecoveryCheckAt = 0;
+
+/**
+ * Cleans up jobs left stuck in queued/running (e.g. after Vercel 60s timeout) and orphaned empty source placeholders.
+ */
+export async function recoverStaleJobs({ maxAgeMs = 6 * 60 * 1000, throttleMs = 60_000 } = {}) {
+  const nowMs = Date.now();
+  if (throttleMs > 0 && nowMs - lastStaleRecoveryCheckAt < throttleMs) {
+    return { recoveredJobs: 0, cleanedOrphanSources: 0 };
+  }
+  lastStaleRecoveryCheckAt = nowMs;
+
+  const db = getDb();
+  const cutoff = new Date(nowMs - maxAgeMs);
+  const now = new Date(nowMs);
+
+  const staleJobs = await db
+    .update(aiGenerationJobs)
+    .set({
+      status: 'interrupted',
+      lastErrorCode: 'SERVER_TIMEOUT_INTERRUPTED',
+      lastErrorMessage:
+        'Proses AI terhenti atau melewati batas waktu server sebelum selesai. Silakan coba lagi.',
+      completedAt: now,
+      updatedAt: now,
+    })
+    .where(and(inArray(aiGenerationJobs.status, ['queued', 'running']), lt(aiGenerationJobs.updatedAt, cutoff)))
+    .returning({ id: aiGenerationJobs.id });
+
+  const deletedSources = await db
+    .delete(sourceAssets)
+    .where(and(isNull(sourceAssets.extractedContentJson), lt(sourceAssets.updatedAt, cutoff)))
+    .returning({ id: sourceAssets.id });
+
+  return {
+    recoveredJobs: staleJobs.length,
+    cleanedOrphanSources: deletedSources.length,
+  };
 }
 
 export async function recordAiUsageEvent({

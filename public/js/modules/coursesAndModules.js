@@ -82,6 +82,147 @@ window.AppModules.coursesAndModules = {
     }
   },
 
+  async loadDailyFocus() {
+    this.loadingDailyFocus = true;
+    try {
+      let tz = 'Asia/Jakarta';
+      try {
+        tz = Intl.DateTimeFormat().resolvedOptions().timeZone || tz;
+      } catch {
+        // Fallback WIB
+      }
+      const { ok, data } = await this.fetchJson(
+        `/api/dashboard/focus?tz=${encodeURIComponent(tz)}`,
+        { headers: { Accept: 'application/json' } }
+      );
+      if (ok && data?.focus) {
+        this.dailyFocus = data.focus;
+      }
+    } catch {
+      // Optional enhancement: fail silently if focus endpoint unavailable
+    } finally {
+      this.loadingDailyFocus = false;
+    }
+  },
+
+  setUasExamDate(rawDate) {
+    const cleaned = String(rawDate || '').trim();
+    this.uasExamDate = /^\d{4}-\d{2}-\d{2}$/.test(cleaned) ? cleaned : '';
+    try {
+      if (this.uasExamDate) {
+        window.localStorage?.setItem('ut-uas-exam-date', this.uasExamDate);
+        const summary = this.uasCountdownSummary;
+        if (summary) {
+          this.announcePolite?.(
+            `Target UAS diatur: ${summary.daysLeftLabel}. ${summary.paceLabel}`
+          );
+        }
+      } else {
+        window.localStorage?.removeItem('ut-uas-exam-date');
+      }
+    } catch {
+      // Ignore storage errors
+    }
+  },
+
+  get uasCountdownSummary() {
+    if (!this.uasExamDate || !/^\d{4}-\d{2}-\d{2}$/.test(this.uasExamDate)) {
+      return null;
+    }
+
+    let daysLeft = 0;
+    try {
+      if (typeof Temporal !== 'undefined' && Temporal.Now?.plainDateISO && Temporal.PlainDate?.from) {
+        const today = Temporal.Now.plainDateISO();
+        const target = Temporal.PlainDate.from(this.uasExamDate);
+        daysLeft = today.until(target, { largestUnit: 'days' }).days;
+      } else {
+        const now = new Date();
+        const todayMidnight = Date.UTC(now.getFullYear(), now.getMonth(), now.getDate());
+        const [y, m, d] = this.uasExamDate.split('-').map((n) => Number.parseInt(n, 10));
+        const targetMidnight = Date.UTC(y, m - 1, d);
+        daysLeft = Math.round((targetMidnight - todayMidnight) / (24 * 60 * 60 * 1000));
+      }
+    } catch {
+      return null;
+    }
+
+    const summary = this.dailyFocus?.summary || null;
+    const remaining = summary?.remainingToMaster ?? 0;
+
+    let daysLeftLabel = 'Hari ini';
+    if (daysLeft < 0) {
+      daysLeftLabel = `Lewat ${Math.abs(daysLeft)} hari`;
+    } else if (daysLeft === 0) {
+      daysLeftLabel = 'Hari H UAS';
+    } else if (typeof Intl !== 'undefined' && typeof Intl.DurationFormat === 'function') {
+      const df = new Intl.DurationFormat('id-ID', { style: 'long' });
+      daysLeftLabel = `${df.format({ days: daysLeft })} lagi`;
+    } else {
+      daysLeftLabel = `${daysLeft} hari lagi`;
+    }
+
+    let paceLabel = 'Semua modul aktif sudah dikuasai. Pertahankan ritme pemanasan.';
+    if (remaining > 0) {
+      if (daysLeft <= 0) {
+        paceLabel = `Masih tersisa ${remaining} modul belum dikuasai.`;
+      } else {
+        const perDay = remaining / daysLeft;
+        if (perDay >= 1) {
+          paceLabel = `Kecepatan ideal: ${perDay.toFixed(1)} modul/hari (${remaining} modul tersisa).`;
+        } else {
+          const daysPerMod = Math.max(1, Math.round(daysLeft / remaining));
+          paceLabel = `Kecepatan ideal: 1 modul tiap ${daysPerMod} hari (${remaining} modul tersisa).`;
+        }
+      }
+    }
+
+    return {
+      daysLeft,
+      daysLeftLabel,
+      paceLabel,
+      overdue: daysLeft < 0,
+      urgent: daysLeft >= 0 && daysLeft <= 14 && remaining > 0,
+    };
+  },
+
+  async executeFocusAction(slot, actionOverride = null) {
+    if (!slot) return;
+    const action = actionOverride || slot.actionType;
+    if (action === 'start_quiz' && slot.questionSetId) {
+      await this.startQuiz(slot.questionSetId);
+    } else if (action === 'start_warmup' && slot.moduleId) {
+      await this.startWarmupQuiz(slot.moduleId);
+    } else if (action === 'open_module_study' && slot.moduleId) {
+      await this.openModule(slot.moduleId, 'study');
+    } else if (slot.moduleId) {
+      await this.openModule(slot.moduleId, 'sources');
+    }
+  },
+
+  toggleSoundEnabled() {
+    this.soundEnabled = !this.soundEnabled;
+    try {
+      window.localStorage?.setItem('ut-sound-enabled', this.soundEnabled ? 'true' : 'false');
+    } catch {
+      // Ignore storage error
+    }
+    if (this.soundEnabled) {
+      this.playFeedbackChime?.('correct');
+    }
+    this.announcePolite?.(
+      this.soundEnabled ? 'Efek suara umpan balik diaktifkan.' : 'Efek suara umpan balik dibisukan.'
+    );
+  },
+
+  announcePolite(message) {
+    if (!message) return;
+    this.liveAnnouncement = '';
+    setTimeout(() => {
+      this.liveAnnouncement = message;
+    }, 25);
+  },
+
   async openCourse(courseId) {
     this.clearBanners();
     this.loadingCourseDetail = true;
@@ -154,6 +295,7 @@ window.AppModules.coursesAndModules = {
     this.activeCourse = null;
     this.activeModule = null;
     this.loadCourses();
+    this.loadDailyFocus?.();
   },
 
   async backToCourse() {
@@ -407,14 +549,18 @@ window.AppModules.coursesAndModules = {
         formData.append('tocImages', files[i]);
       }
 
-      const res = await fetch(`/api/courses/${this.activeCourse.id}/auto-map-modules`, {
-        method: 'POST',
-        body: formData,
-      });
+      const { ok, status, data } = await this.fetchJson(
+        `/api/courses/${this.activeCourse.id}/auto-map-modules`,
+        {
+          method: 'POST',
+          headers: { Accept: 'application/json' },
+          body: formData,
+        },
+        0
+      );
 
-      const data = await res.json();
-      if (!res.ok) {
-        throw new Error(data.message || 'Gagal memetakan modul dari foto Daftar Isi.');
+      if (!ok) {
+        throw new Error(this.extractApiErrorMessage(data, status, 'Gagal memetakan modul dari foto Daftar Isi.'));
       }
 
       await this.openCourse(this.activeCourse.id);

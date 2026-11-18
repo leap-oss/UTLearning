@@ -4,6 +4,7 @@ import { getDb } from '../db/client.js';
 import { modules, sourceAssets, studyPacks, questionSets, quizAttempts } from '../db/schema.js';
 import { getEnvConfig } from '../config/env.js';
 import { buildCacheKey, computeSha256 } from './aiRetry.js';
+import { recoverStaleJobs } from './aiJobRepository.js';
 import { generateStructuredContent } from './geminiClient.js';
 import {
   SOURCE_LABELS,
@@ -309,6 +310,7 @@ export async function enqueueSourceExtraction({
   aiQueue,
   extractorFn = defaultGeminiExtractionCall,
 }) {
+  await recoverStaleJobs().catch(() => {});
   const db = getDb();
   const [mod] = await db
     .select()

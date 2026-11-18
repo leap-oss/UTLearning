@@ -1044,6 +1044,61 @@ test('Empty Response & 5xx Failover + Cooldown Skip + Extraction Sub-Batch Auto-
         'key-3-charlie12',
         'key-1-alpha1234',
       ]);
+
+      // Case 5: Request timeout on a model skips other keys on that stalled model tier and isolates it for 3m
+      defaultApiKeyPool.reset();
+      const timeoutCalls = [];
+      defaultApiKeyPool.getClientForKey = (key) => ({
+        models: {
+          generateContent: async ({ model }) => {
+            timeoutCalls.push({ model, key });
+            if (model === 'gemini-4-hydrogen') {
+              const abortErr = new Error('The operation was aborted due to timeout');
+              abortErr.name = 'TimeoutError';
+              abortErr.code = 20;
+              throw abortErr;
+            }
+            return {
+              text: JSON.stringify({ ok: true }),
+              usageMetadata: { promptTokenCount: 20, candidatesTokenCount: 10, totalTokenCount: 30 },
+            };
+          },
+        },
+      });
+      const resTimeout1 = await generateStructuredContent({
+        taskType: 'extract_sources',
+        contents: 'Timeout jump',
+      });
+      assert.equal(resTimeout1.model, 'gemini-3.6-flash');
+      assert.equal(
+        timeoutCalls.filter((c) => c.model === 'gemini-4-hydrogen').length,
+        1,
+        'Stalled model timeout must jump immediately without wasting time on remaining keys of same stalled tier'
+      );
+
+      const resTimeout2 = await generateStructuredContent({
+        taskType: 'extract_sources',
+        contents: 'Subsequent call skips stalled tier',
+      });
+      assert.equal(resTimeout2.model, 'gemini-3.6-flash');
+      assert.equal(
+        timeoutCalls.filter((c) => c.model === 'gemini-4-hydrogen').length,
+        1,
+        'Second call within timeout cooldown window must skip stalled tier completely'
+      );
+
+      // Verify frontend extractApiErrorMessage translates 504/Vercel proxy timeout payloads clearly
+      const apiWin = { AppModules: {} };
+      const apiCode = fs.readFileSync(path.join(projectRoot, 'public/js/modules/apiAndJobs.js'), 'utf8');
+      new Function('window', apiCode)(apiWin);
+      const apiHelper = apiWin.AppModules.apiAndJobs;
+      const msg504 = apiHelper.extractApiErrorMessage({ error: { code: '504', message: 'FUNCTION_INVOCATION_TIMEOUT' } }, 504, 'Fallback');
+      assert.match(msg504, /HTTP 504/i);
+      assert.match(msg504, /60 detik/);
+      assert.equal(
+        apiHelper.extractApiErrorMessage({ error: { message: 'Nested err details' } }, 500, 'Fallback'),
+        'Nested err details'
+      );
     } finally {
       defaultApiKeyPool.getClientForKey = origGetClient;
       defaultApiKeyPool.reset();

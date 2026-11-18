@@ -1,6 +1,61 @@
 window.AppModules = window.AppModules || {};
 
 window.AppModules.quizAndRemedial = {
+  prefersReducedMotion() {
+    return (
+      typeof window !== 'undefined' &&
+      typeof window.matchMedia === 'function' &&
+      window.matchMedia('(prefers-reduced-motion: reduce)').matches
+    );
+  },
+
+  playFeedbackChime(kind = 'correct') {
+    if (!this.soundEnabled || typeof window === 'undefined') return;
+    const AudioCtx = window.AudioContext || window.webkitAudioContext;
+    if (!AudioCtx) return;
+
+    try {
+      if (!this._audioCtx || this._audioCtx.state === 'closed') {
+        this._audioCtx = new AudioCtx();
+      }
+      const ctx = this._audioCtx;
+      if (ctx.state === 'suspended') {
+        ctx.resume().catch(() => {});
+      }
+
+      const now = ctx.currentTime;
+      const notes =
+        kind === 'mastered'
+          ? [
+              { freq: 523.25, start: 0, dur: 0.14, gain: 0.035 },
+              { freq: 659.25, start: 0.09, dur: 0.16, gain: 0.035 },
+              { freq: 783.99, start: 0.18, dur: 0.26, gain: 0.04 },
+            ]
+          : kind === 'wrong'
+            ? [{ freq: 246.94, start: 0, dur: 0.14, gain: 0.025 }]
+            : [
+                { freq: 523.25, start: 0, dur: 0.11, gain: 0.03 },
+                { freq: 659.25, start: 0.07, dur: 0.15, gain: 0.03 },
+              ];
+
+      for (const n of notes) {
+        const osc = ctx.createOscillator();
+        const amp = ctx.createGain();
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(n.freq, now + n.start);
+        amp.gain.setValueAtTime(0.0001, now + n.start);
+        amp.gain.exponentialRampToValueAtTime(n.gain, now + n.start + 0.015);
+        amp.gain.exponentialRampToValueAtTime(0.0001, now + n.start + n.dur);
+        osc.connect(amp);
+        amp.connect(ctx.destination);
+        osc.start(now + n.start);
+        osc.stop(now + n.start + n.dur + 0.02);
+      }
+    } catch {
+      // Ignore blocked AudioContext
+    }
+  },
+
   async startQuiz(questionSetId) {
     this.clearBanners();
     try {
@@ -14,6 +69,16 @@ window.AppModules.quizAndRemedial = {
       this.activeQuestionSet = data.questionSet;
       this.quizSelections = {};
       this.quizCurrentPage = 0;
+      this.questionChecks = {};
+      this.sessionCorrectStreak = 0;
+      this.bestSessionStreak = 0;
+      this.celebrationActive = false;
+      this.celebrationParticles = [];
+      if (data.questionSet?.setType === 'exam_simulation') {
+        this.instantCheckMode = false;
+      } else if (data.questionSet?.setType === 'warmup') {
+        this.instantCheckMode = true;
+      }
 
       const meta = data.questionSet?.metadata || data.questionSet?.metadataJson || {};
       const hasDiagnostics = Boolean(meta.diagnosticFeedback?.topicDiagnostics?.length > 0);
@@ -40,6 +105,120 @@ window.AppModules.quizAndRemedial = {
       this.currentView = 'quiz_runner';
     } catch (err) {
       this.showError(err instanceof Error ? err.message : 'Gagal membuka kuis.');
+    }
+  },
+
+  async startWarmupQuiz(moduleId) {
+    if (!moduleId) return;
+    this.clearBanners();
+    try {
+      const { ok, status, data } = await this.fetchJson(`/api/modules/${moduleId}/warmup-quiz`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Accept: 'application/json',
+        },
+        body: JSON.stringify({ maxQuestions: 5 }),
+      });
+      if (!ok || !data?.questionSet) {
+        throw new Error(this.extractApiErrorMessage(data, status, 'Gagal menyusun kuis pemanasan.'));
+      }
+      this.activeQuestionSet = data.questionSet;
+      this.quizSelections = {};
+      this.quizCurrentPage = 0;
+      this.questionChecks = {};
+      this.sessionCorrectStreak = 0;
+      this.bestSessionStreak = 0;
+      this.instantCheckMode = true;
+      this.remedialRunnerStep = 'quiz';
+      this.activeAttemptReview = null;
+      this.currentView = 'quiz_runner';
+      this.showNotice('Kuis Pemanasan Kilat (5 soal · 0 kuota AI) siap dikerjakan.');
+    } catch (err) {
+      this.showError(err instanceof Error ? err.message : 'Gagal membuka kuis pemanasan.');
+    }
+  },
+
+  toggleInstantCheckMode() {
+    if (this.activeQuestionSet?.setType === 'exam_simulation') {
+      this.instantCheckMode = false;
+      this.showError('Cek langsung dinonaktifkan pada Simulasi UAS agar sesuai kondisi ujian.');
+      return;
+    }
+    this.instantCheckMode = !this.instantCheckMode;
+    this.announcePolite?.(
+      this.instantCheckMode
+        ? 'Mode cek langsung per soal diaktifkan.'
+        : 'Mode cek langsung per soal dimatikan.'
+    );
+  },
+
+  onQuizOptionChanged(questionId) {
+    if (this.questionChecks && this.questionChecks[questionId] && !this.questionChecks[questionId].checking) {
+      delete this.questionChecks[questionId];
+    }
+    this.saveDraftProgress();
+  },
+
+  async checkSingleQuestion(questionId) {
+    if (!this.activeQuestionSet?.id || !questionId) return;
+    if (this.activeQuestionSet.setType === 'exam_simulation') return;
+
+    const selectedOption = this.quizSelections?.[questionId];
+    if (!selectedOption) {
+      this.showError('Pilih salah satu opsi jawaban terlebih dahulu sebelum memeriksa soal ini.');
+      return;
+    }
+
+    this.questionChecks = {
+      ...this.questionChecks,
+      [questionId]: { checking: true },
+    };
+
+    try {
+      const { ok, status, data } = await this.fetchJson(
+        `/api/question-sets/${this.activeQuestionSet.id}/check-question`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Accept: 'application/json',
+          },
+          body: JSON.stringify({ questionId, selectedOption }),
+        }
+      );
+      if (!ok || !data?.check) {
+        throw new Error(this.extractApiErrorMessage(data, status, 'Gagal memeriksa soal.'));
+      }
+
+      const check = data.check;
+      this.questionChecks = {
+        ...this.questionChecks,
+        [questionId]: { checking: false, ...check },
+      };
+
+      if (check.isCorrect) {
+        this.sessionCorrectStreak += 1;
+        if (this.sessionCorrectStreak > this.bestSessionStreak) {
+          this.bestSessionStreak = this.sessionCorrectStreak;
+        }
+        this.playFeedbackChime('correct');
+        this.announcePolite?.(
+          `Jawaban ${check.correctOption} benar. Rangkaian benar: ${this.sessionCorrectStreak}.`
+        );
+      } else {
+        this.sessionCorrectStreak = 0;
+        this.playFeedbackChime('wrong');
+        this.announcePolite?.(
+          `Jawaban belum tepat. Kunci benar adalah ${check.correctOption}.`
+        );
+      }
+      this.saveDraftProgress();
+    } catch (err) {
+      const nextChecks = { ...this.questionChecks };
+      delete nextChecks[questionId];
+      this.questionChecks = nextChecks;
+      this.showError(err instanceof Error ? err.message : 'Gagal memeriksa jawaban soal.');
     }
   },
 
@@ -148,6 +327,118 @@ window.AppModules.quizAndRemedial = {
     return found ? found.text : optionKey;
   },
 
+  get attemptOutcomeFeedback() {
+    const rev = this.activeAttemptReview;
+    if (!rev) return null;
+    const score = Number(rev.score) || 0;
+
+    if (rev.newlyMastered) {
+      return {
+        tone: 'ok',
+        badge: 'Baru Dikuasai',
+        headline: 'Penguasaan modul berhasil dikunci',
+        body: `Anda menembus ambang batas 80% dengan skor ${score}%. Modul ini sekarang berstatus Dikuasai — tinggal jaga ritme pemanasan berkala menjelang UAS.`,
+      };
+    }
+    if (score === 100) {
+      return {
+        tone: 'ok',
+        badge: 'Sempurna · 100%',
+        headline: 'Seluruh konsep terjawab tepat',
+        body: 'Pemahaman Anda pada seluruh butir soal di sesi ini sangat solid dan akurat.',
+      };
+    }
+    if (score >= 80) {
+      return {
+        tone: 'ok',
+        badge: 'Tuntas >= 80%',
+        headline: 'Target penguasaan modul tercapai',
+        body: 'Pertahankan konsistensi ini dan periksa kembali butir yang masih ragu bila ada di bawah.',
+      };
+    }
+    if (score >= 60) {
+      const gap = Math.max(1, 80 - score);
+      return {
+        tone: 'review',
+        badge: 'Hampir Tuntas',
+        headline: `Kurang ${gap} poin lagi menuju ambang 80%`,
+        body: 'Fondasi Anda sudah terbentuk. Fokuskan 1 sesi remedial pada topik berakurasi < 75% agar penguasaan modul cepat terkunci.',
+      };
+    }
+    return {
+      tone: 'bad',
+      badge: 'Perlu Ulas Ulang',
+      headline: 'Jangan terburu-buru — perkuat dari akar konsep',
+      body: 'Gunakan pembahasan & analisis miskonsepsi di bawah, lalu baca kembali topik yang merah di Study Pack sebelum mengulang kuis.',
+    };
+  },
+
+  triggerCelebrationBurst() {
+    if (this.prefersReducedMotion()) {
+      this.celebrationActive = false;
+      this.celebrationParticles = [];
+      return;
+    }
+    const tones = ['accent', 'ok', 'chalk', 'review'];
+    const particles = [];
+    const count = 16;
+    for (let i = 0; i < count; i += 1) {
+      const angle = ((Math.PI * 2) / count) * i + (i % 2 === 0 ? 0.14 : -0.14);
+      const dist = 56 + (i % 3) * 28;
+      particles.push({
+        id: `p-${i}`,
+        tx: `${Math.round(Math.cos(angle) * dist)}px`,
+        ty: `${Math.round(Math.sin(angle) * dist - 14)}px`,
+        rot: `${(i % 2 === 0 ? 1 : -1) * (65 + i * 14)}deg`,
+        delay: `${(i % 4) * 35}ms`,
+        tone: tones[i % tones.length],
+      });
+    }
+    this.celebrationParticles = particles;
+    this.celebrationActive = true;
+    clearTimeout(this._celebrationTimer);
+    this._celebrationTimer = setTimeout(() => {
+      this.celebrationActive = false;
+    }, 1500);
+  },
+
+  animateAttemptReviewEntrance(attempt) {
+    const targetScore = Math.max(0, Math.min(100, Number(attempt?.score) || 0));
+    this.celebrationActive = false;
+    this.celebrationParticles = [];
+
+    if (this.prefersReducedMotion() || typeof window === 'undefined' || !window.requestAnimationFrame) {
+      this.reviewDisplayScore = targetScore;
+    } else {
+      this.reviewDisplayScore = 0;
+      const durationMs = 560;
+      const startTime = performance.now();
+      const step = (now) => {
+        const progress = Math.min(1, (now - startTime) / durationMs);
+        const eased = 1 - Math.pow(1 - progress, 3);
+        this.reviewDisplayScore = Math.round(eased * targetScore);
+        if (progress < 1) {
+          window.requestAnimationFrame(step);
+        } else {
+          this.reviewDisplayScore = targetScore;
+        }
+      };
+      window.requestAnimationFrame(step);
+    }
+
+    if (attempt?.newlyMastered || targetScore >= 80) {
+      this.playFeedbackChime('mastered');
+      if (attempt?.newlyMastered || targetScore >= 90) {
+        this.triggerCelebrationBurst();
+      }
+    }
+
+    const fb = this.attemptOutcomeFeedback;
+    if (fb) {
+      this.announcePolite?.(`Hasil kuis: ${targetScore}%. ${fb.headline}.`);
+    }
+  },
+
   async submitQuizAnswers() {
     if (!this.activeQuestionSet) return;
     const totalQ = this.activeQuestionSet.questions?.length || 0;
@@ -187,7 +478,13 @@ window.AppModules.quizAndRemedial = {
       this.activeQuestionSet = null;
       this.activeAttemptReview = data.attempt;
       this.currentView = 'attempt_review';
-      this.showNotice(`Kuis selesai dinilai di server! Skor Anda: ${data.attempt.score}%`);
+      this.animateAttemptReviewEntrance(data.attempt);
+      this.loadDailyFocus?.();
+      this.showNotice(
+        data.attempt?.newlyMastered
+          ? `Selamat! Modul ini baru saja Dikuasai dengan skor ${data.attempt.score}%!`
+          : `Kuis selesai dinilai! Skor Anda: ${data.attempt.score}%`
+      );
     } catch (err) {
       this.showError(err instanceof Error ? err.message : 'Gagal menilai kuis.');
     } finally {
@@ -208,6 +505,9 @@ window.AppModules.quizAndRemedial = {
       }
       this.activeQuestionSet = null;
       this.activeAttemptReview = data.attempt;
+      this.celebrationActive = false;
+      this.celebrationParticles = [];
+      this.reviewDisplayScore = Number(data.attempt?.score) || 0;
       this.currentView = 'attempt_review';
     } catch (err) {
       this.showError(err instanceof Error ? err.message : 'Gagal membuka pembahasan.');

@@ -94,21 +94,24 @@ window.AppModules.studyPackAndReader = {
 
     const idemKey = this.generateIdempotencyKey('studypack');
     try {
-      const res = await fetch(`/api/modules/${targetModuleId}/study-packs`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Idempotency-Key': idemKey,
-          Accept: 'application/json',
+      const { ok, status, data } = await this.fetchJson(
+        `/api/modules/${targetModuleId}/study-packs`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Idempotency-Key': idemKey,
+            Accept: 'application/json',
+          },
+          body: JSON.stringify({
+            regenerate,
+          }),
         },
-        body: JSON.stringify({
-          regenerate,
-        }),
-      });
+        0
+      );
 
-      const data = await res.json();
-      if (!res.ok) {
-        throw new Error(data.message || 'Gagal memulai pembuatan Study Pack.');
+      if (!ok) {
+        throw new Error(this.extractApiErrorMessage(data, status, 'Gagal memulai pembuatan Study Pack.'));
       }
 
       await this.pollAiJobUntilDone(
@@ -143,19 +146,22 @@ window.AppModules.studyPackAndReader = {
 
     const idemKey = this.generateIdempotencyKey('practice');
     try {
-      const res = await fetch(`/api/modules/${targetModuleId}/question-sets`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Idempotency-Key': idemKey,
-          Accept: 'application/json',
+      const { ok, status, data } = await this.fetchJson(
+        `/api/modules/${targetModuleId}/question-sets`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Idempotency-Key': idemKey,
+            Accept: 'application/json',
+          },
+          body: JSON.stringify({}),
         },
-        body: JSON.stringify({}),
-      });
+        0
+      );
 
-      const data = await res.json();
-      if (!res.ok) {
-        throw new Error(data.message || 'Gagal membuat set latihan tambahan.');
+      if (!ok) {
+        throw new Error(this.extractApiErrorMessage(data, status, 'Gagal membuat set latihan tambahan.'));
       }
 
       await this.pollAiJobUntilDone(
@@ -183,6 +189,110 @@ window.AppModules.studyPackAndReader = {
     if (sections.length > 0 && !this.activeTopicId) {
       this.activeTopicId = sections[0].id;
     }
+  },
+
+  get availableFlashcards() {
+    const summary = this.activeStudyPack?.summaryJson;
+    if (!summary) return [];
+
+    const cards = [];
+    const seenFronts = new Set();
+    const pushCard = (kind, front, back, hint = '') => {
+      const cleanFront = String(front || '').trim();
+      const cleanBack = String(back || '').trim();
+      if (!cleanFront || !cleanBack) return;
+      const dedupeKey = cleanFront.toLowerCase();
+      if (seenFronts.has(dedupeKey)) return;
+      seenFronts.add(dedupeKey);
+      cards.push({
+        id: `fc-${cards.length + 1}`,
+        kind,
+        front: cleanFront,
+        back: cleanBack,
+        hint: String(hint || '').trim(),
+      });
+    };
+
+    for (const g of summary.glossary || []) {
+      pushCard('Istilah Penting', g.term, g.bmpDefinition, g.simpleAnalogy ? `Analogi: ${g.simpleAnalogy}` : '');
+    }
+    for (const m of summary.commonMisconceptions || []) {
+      pushCard('Cek Miskonsepsi', `Benar atau jebakan? "${m.misconception}"`, m.correction);
+    }
+    for (const topic of summary.topics || []) {
+      for (const m of topic.commonMisconceptions || []) {
+        pushCard(
+          `Miskonsepsi · ${topic.topicLabel || topic.title || 'Topik'}`,
+          `Benar atau jebakan? "${m.misconception}"`,
+          m.correction
+        );
+      }
+    }
+    return cards;
+  },
+
+  get currentFlashcard() {
+    const cards = this.flashcardSession?.cards || [];
+    return cards.length > 0 ? cards[0] : null;
+  },
+
+  startFlashcardSession() {
+    const sourceCards = [...this.availableFlashcards];
+    if (sourceCards.length === 0) {
+      this.showError('Study Pack ini belum memiliki daftar istilah atau miskonsepsi untuk mode flashcard.');
+      return;
+    }
+
+    for (let i = sourceCards.length - 1; i > 0; i -= 1) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [sourceCards[i], sourceCards[j]] = [sourceCards[j], sourceCards[i]];
+    }
+
+    this.flashcardSession = {
+      active: true,
+      cards: sourceCards,
+      index: 0,
+      revealed: false,
+      rememberedCount: 0,
+      totalUnique: sourceCards.length,
+    };
+    this.announcePolite?.(`Mode Flashcard dibuka dengan ${sourceCards.length} kartu hafalan.`);
+  },
+
+  revealFlashcard() {
+    if (!this.flashcardSession?.active) return;
+    this.flashcardSession.revealed = true;
+  },
+
+  gradeFlashcard(remembered) {
+    const sess = this.flashcardSession;
+    if (!sess?.active || !sess.cards?.length) return;
+
+    const current = sess.cards[0];
+    const remaining = sess.cards.slice(1);
+    if (remembered) {
+      sess.rememberedCount += 1;
+      sess.cards = remaining;
+      sess.revealed = false;
+      if (remaining.length === 0) {
+        this.playFeedbackChime?.('mastered');
+        this.announcePolite?.(`Semua ${sess.totalUnique} kartu flashcard selesai diingat!`);
+      } else {
+        this.playFeedbackChime?.('correct');
+        this.announcePolite?.(
+          `Ditandai sudah ingat. Sisa ${remaining.length} dari ${sess.totalUnique} kartu.`
+        );
+      }
+    } else {
+      sess.cards = [...remaining, current];
+      sess.revealed = false;
+      this.announcePolite?.('Kartu dikembalikan ke antrean akhir untuk diulang nanti.');
+    }
+  },
+
+  closeFlashcardSession() {
+    if (!this.flashcardSession) return;
+    this.flashcardSession.active = false;
   },
 
   scrollToTop() {

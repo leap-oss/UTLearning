@@ -12,6 +12,39 @@ import {
 
 export const WEAK_TOPIC_THRESHOLD = 75;
 export const MASTERY_SCORE_THRESHOLD = 80;
+export const FRESHNESS_WARMUP_DAYS = 14;
+
+/**
+ * Computes how many days have elapsed since the last submitted attempt and
+ * whether a mastered module needs a zero-AI 5-question refresher warmup.
+ * @param {Date|string|null} lastAttemptAt
+ * @param {string} status
+ * @param {Date} [referenceDate]
+ */
+export function computeFreshnessInfo(lastAttemptAt, status, referenceDate = new Date()) {
+  if (!lastAttemptAt) {
+    return {
+      lastAttemptAt: null,
+      daysSinceLastAttempt: null,
+      needsFreshnessWarmup: false,
+    };
+  }
+  const parsed = new Date(lastAttemptAt);
+  if (Number.isNaN(parsed.getTime())) {
+    return {
+      lastAttemptAt: null,
+      daysSinceLastAttempt: null,
+      needsFreshnessWarmup: false,
+    };
+  }
+  const diffMs = Math.max(0, referenceDate.getTime() - parsed.getTime());
+  const daysSinceLastAttempt = Math.floor(diffMs / (24 * 60 * 60 * 1000));
+  return {
+    lastAttemptAt: parsed,
+    daysSinceLastAttempt,
+    needsFreshnessWarmup: status === 'mastered' && daysSinceLastAttempt >= FRESHNESS_WARMUP_DAYS,
+  };
+}
 
 export function normalizeTopicKey(rawLabel) {
   return String(rawLabel || '')
@@ -168,14 +201,28 @@ export function computeTopicProgressFromAnswers(answerRows = [], canonicalLabels
 }
 
 export async function evaluateAndUpdateModuleStatus(tx, moduleId) {
-  if (!moduleId) return;
+  if (!moduleId) return null;
+
+  const [existingMod] = await tx
+    .select({ id: modules.id, status: modules.status, courseId: modules.courseId })
+    .from(modules)
+    .where(eq(modules.id, moduleId))
+    .limit(1);
+
+  if (!existingMod) return null;
 
   const modQSets = await tx
     .select({ id: questionSets.id })
     .from(questionSets)
     .where(eq(questionSets.moduleId, moduleId));
 
-  if (modQSets.length === 0) return;
+  if (modQSets.length === 0) {
+    return {
+      previousStatus: existingMod.status,
+      nextStatus: existingMod.status,
+      newlyMastered: false,
+    };
+  }
 
   const qSetIds = modQSets.map((s) => s.id);
   const attempts = await tx
@@ -189,7 +236,13 @@ export async function evaluateAndUpdateModuleStatus(tx, moduleId) {
     )
     .orderBy(desc(quizAttempts.submittedAt));
 
-  if (attempts.length === 0) return;
+  if (attempts.length === 0) {
+    return {
+      previousStatus: existingMod.status,
+      nextStatus: existingMod.status,
+      newlyMastered: false,
+    };
+  }
 
   const latestAttempt = attempts[0];
   const hasMasteryAttempt = attempts.some((a) => a.score >= MASTERY_SCORE_THRESHOLD);
@@ -236,6 +289,12 @@ export async function evaluateAndUpdateModuleStatus(tx, moduleId) {
       .set({ updatedAt: now })
       .where(eq(courses.id, updatedMod.courseId));
   }
+
+  return {
+    previousStatus: existingMod.status,
+    nextStatus,
+    newlyMastered: existingMod.status !== 'mastered' && nextStatus === 'mastered',
+  };
 }
 
 export async function getModuleProgress(moduleId) {
@@ -325,6 +384,7 @@ export async function getModuleProgress(moduleId) {
   const topicProgress = computeTopicProgressFromAnswers(answerRows, canonicalTopics);
   const bestScore =
     attempts.length > 0 ? Math.max(...attempts.map((a) => a.score)) : null;
+  const freshness = computeFreshnessInfo(attempts[0]?.submittedAt ?? null, mod.status);
 
   return {
     moduleId: mod.id,
@@ -338,6 +398,7 @@ export async function getModuleProgress(moduleId) {
         : null,
     latestScore: attempts[0]?.score ?? null,
     bestScore,
+    ...freshness,
     attempts: attempts.map((a) => ({
       ...a,
       questionSetTitle: qSetTitleMap.get(a.questionSetId)?.title || 'Kuis',
@@ -503,6 +564,7 @@ export async function getCourseProgress(courseId) {
     );
     const bestScore =
       modAttempts.length > 0 ? Math.max(...modAttempts.map((a) => a.score)) : null;
+    const freshness = computeFreshnessInfo(modAttempts[0]?.submittedAt ?? null, mod.status);
 
     return {
       moduleId: mod.id,
@@ -516,6 +578,7 @@ export async function getCourseProgress(courseId) {
           : null,
       latestScore: modAttempts[0]?.score ?? null,
       bestScore,
+      ...freshness,
       attempts: modAttempts.map((a) => ({
         ...a,
         questionSetTitle: qSetTitleMap.get(a.questionSetId)?.title || 'Kuis',

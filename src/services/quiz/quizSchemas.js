@@ -12,6 +12,16 @@ export const submitAttemptPayloadSchema = z.object({
     .min(1, 'Minimal satu jawaban harus dikirim.'),
 });
 
+export const checkQuestionPayloadSchema = z.object({
+  questionId: z.string().uuid('Format questionId tidak valid.'),
+  selectedOption: z
+    .string()
+    .trim()
+    .min(1, 'Opsi jawaban wajib dipilih.')
+    .max(16)
+    .transform((s) => s.toUpperCase()),
+});
+
 export const remedialBatchOutputSchema = z.object({
   schemaVersion: z.number().int().optional().default(1),
   title: z

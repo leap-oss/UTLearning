@@ -510,18 +510,24 @@ function classifyGeminiCallFailure(err) {
   }
 
   if (
+    err?.name === 'TimeoutError' ||
+    err?.name === 'AbortError' ||
+    Number(err?.code) === 20 ||
+    errMsg.includes('deadline_exceeded') ||
+    errMsg.includes('timeout') ||
+    errMsg.includes('aborted')
+  ) {
+    return { kind: 'timeout', status };
+  }
+
+  if (
     status === 500 ||
     status === 502 ||
     status === 503 ||
     status === 504 ||
-    err?.name === 'TimeoutError' ||
-    err?.name === 'AbortError' ||
     errMsg.includes('overloaded') ||
     errMsg.includes('unavailable') ||
     errMsg.includes('internal') ||
-    errMsg.includes('deadline_exceeded') ||
-    errMsg.includes('timeout') ||
-    errMsg.includes('aborted') ||
     errMsg.includes('econnreset') ||
     errMsg.includes('fetch failed')
   ) {
@@ -598,8 +604,14 @@ export async function generateStructuredContent({
 
     let shouldFailoverToNextModel = false;
     const attemptedKeys = new Set();
-    const requestTimeoutMs =
-      taskType === 'extract_toc_modules' || taskType === 'generate_remedial' ? 90_000 : 180_000;
+    const isLightTask = taskType === 'extract_toc_modules' || taskType === 'generate_remedial';
+    const requestTimeoutMs = process.env.VERCEL
+      ? hasMoreModels
+        ? 35_000
+        : 48_000
+      : isLightTask
+        ? 45_000
+        : 110_000;
 
     for (let attempt = 0; attempt < maxAttemptsPerModel; attempt++) {
       const keyInfo = pool.getActiveKeyInfo(model);
@@ -759,6 +771,23 @@ export async function generateStructuredContent({
             shouldFailoverToNextModel = true;
             break;
           }
+          throw attemptErr;
+        }
+
+        if (kind === 'timeout') {
+          // Model endpoint timed out — skip retrying other keys on the same stalled model tier when fallbacks exist
+          const timeoutCooldownMs = 3 * 60 * 1000;
+          if (hasMoreModels) {
+            for (const k of keys) {
+              pool.markCooldown(k, timeoutCooldownMs, model);
+            }
+            console.warn(
+              `[geminiClient] [${model}] Request timeout (${Math.round(requestTimeoutMs / 1000)}d). Melewati tier ini selama 3m dan beralih ke "${candidateModels[mIdx + 1]}"...`
+            );
+            shouldFailoverToNextModel = true;
+            break;
+          }
+          pool.markCooldown(keyInfo.key, 30 * 1000, model);
           throw attemptErr;
         }
 

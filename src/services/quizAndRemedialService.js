@@ -1,5 +1,6 @@
 export {
   submitAttemptPayloadSchema,
+  checkQuestionPayloadSchema,
   remedialBatchOutputSchema,
   REMEDIAL_BATCH_JSON_SCHEMA,
   examSimulationQuestionSchema,
@@ -10,6 +11,8 @@ export {
 export {
   WEAK_TOPIC_THRESHOLD,
   MASTERY_SCORE_THRESHOLD,
+  FRESHNESS_WARMUP_DAYS,
+  computeFreshnessInfo,
   normalizeTopicKey,
   resolveCanonicalTopicLabel,
   computeTopicProgressFromAnswers,
@@ -21,6 +24,8 @@ export {
 export {
   getQuestionSetWithoutAnswerKey,
   submitQuizAttempt,
+  checkSingleQuestionAnswer,
+  createWarmupQuizSet,
   saveQuizDraft,
   getAttemptReviewById,
 } from './quiz/quizGradingService.js';

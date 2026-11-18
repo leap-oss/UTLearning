@@ -73,6 +73,32 @@ window.AppModules.state = {
   // Feedback banners
   noticeMessage: null,
   errorMessage: null,
+  liveAnnouncement: '',
+
+  // Daily focus, readiness, UAS target & retention state
+  dailyFocus: null,
+  loadingDailyFocus: false,
+  uasExamDate: '',
+  soundEnabled: true,
+
+  // Flashcard active recall state
+  flashcardSession: {
+    active: false,
+    cards: [],
+    index: 0,
+    revealed: false,
+    rememberedCount: 0,
+    totalUnique: 0,
+  },
+
+  // Instant-check & celebratory review state
+  instantCheckMode: false,
+  questionChecks: {},
+  sessionCorrectStreak: 0,
+  bestSessionStreak: 0,
+  reviewDisplayScore: 0,
+  celebrationParticles: [],
+  celebrationActive: false,
 
   // Course Modal state
   showCourseModal: false,
@@ -107,8 +133,24 @@ window.AppModules.state = {
   },
 
   async init() {
+    try {
+      const savedExamDate = window.localStorage?.getItem('ut-uas-exam-date') || '';
+      if (/^\d{4}-\d{2}-\d{2}$/.test(savedExamDate)) {
+        this.uasExamDate = savedExamDate;
+      }
+      const savedSound = window.localStorage?.getItem('ut-sound-enabled');
+      if (savedSound === 'false') {
+        this.soundEnabled = false;
+      }
+    } catch {
+      // Ignore storage failures
+    }
+
     this.$watch('currentView', (view) => {
       this.focusViewTitle();
+      if (view !== 'module' && this.flashcardSession?.active) {
+        this.flashcardSession.active = false;
+      }
       if (view === 'module' && this.moduleTab === 'study') {
         this.$nextTick(() => {
           this.setupTopicScrollSpy();
@@ -117,6 +159,9 @@ window.AppModules.state = {
       }
     });
     this.$watch('moduleTab', (tab) => {
+      if (tab !== 'study' && this.flashcardSession?.active) {
+        this.flashcardSession.active = false;
+      }
       if (tab === 'study') {
         this.$nextTick(() => {
           this.setupTopicScrollSpy();
@@ -125,6 +170,9 @@ window.AppModules.state = {
       }
     });
     this.$watch('selectedStudyPackVersion', () => {
+      if (this.flashcardSession?.active) {
+        this.flashcardSession.active = false;
+      }
       if (this.moduleTab === 'study') {
         this.$nextTick(() => {
           this.setupTopicScrollSpy();
@@ -140,7 +188,7 @@ window.AppModules.state = {
       this._pasteListenerAttached = true;
       window.addEventListener('paste', (event) => this.handleGlobalImagePaste(event));
     }
-    await this.loadCourses();
+    await Promise.all([this.loadCourses(), this.loadDailyFocus?.()]);
     this.refreshSystemStatus(this.currentView === 'system');
   },
 };

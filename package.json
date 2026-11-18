@@ -10,7 +10,7 @@
     "build:css": "tailwindcss -i ./src/styles/tailwind.css -o ./public/css/tailwind.css --minify",
     "build": "npm run build:css",
     "vercel-build": "npm run build:css",
-    "test": "node --test test/*.test.js",
+    "test": "NODE_ENV=test node --test test/*.test.js",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "node src/db/migrate.js",
     "db:seed:dev": "node src/db/seed-dev.js"

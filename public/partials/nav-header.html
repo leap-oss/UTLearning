@@ -31,9 +31,25 @@
           x-text="health?.status === 'ok' && health?.database?.connected ? '(siap)' : '(perlu diperiksa)'"
         ></span>
       </button>
+      <button
+        type="button"
+        class="nav-link nav-sound-toggle"
+        @click="toggleSoundEnabled()"
+        :aria-pressed="soundEnabled.toString()"
+        aria-label="Efek suara umpan balik"
+        title="Aktifkan/bisukan suara umpan balik halus"
+      >
+        <span
+          :class="soundEnabled ? 'state state--ok' : 'state state--empty'"
+          aria-hidden="true"
+        ></span>
+        <span>Suara</span>
+      </button>
     </nav>
   </div>
 </header>
+
+<div id="a11y-live-status" class="visually-hidden" aria-live="polite" aria-atomic="true" x-text="liveAnnouncement"></div>
 
 <!-- ==================== FEEDBACK (toasts) ==================== -->
 <div class="toast-region">

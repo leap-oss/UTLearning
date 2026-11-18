@@ -18,4 +18,7 @@ button { cursor: pointer; }
 .visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 @media (max-width: 60rem) { :root { --gutter: 24px; } }
 @media (max-width: 40rem) { :root { --gutter: 16px; --gap-columns: 16px; } }
-@media (prefers-reduced-motion: reduce) { *:not(.keep-motion), *:not(.keep-motion)::before, *:not(.keep-motion)::after { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; transition-duration: 0.01ms !important; scroll-behavior: auto !important; } }
+@media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior: auto !important; }
+  .view, .confetti-piece, .question-check-box, .flashcard-back { animation: none !important; }
+}

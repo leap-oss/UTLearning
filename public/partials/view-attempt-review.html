@@ -25,10 +25,19 @@
         <p class="meta">Dikumpulkan <span x-text="formatDateTime(activeAttemptReview?.submittedAt)"></span></p>
       </div>
       <div class="split split--center" style="border-top: 1px solid var(--color-rule); padding-top: var(--space-lg)">
-        <div class="stack-xs">
+        <div class="stack-xs celebration-anchor">
+          <div class="confetti-burst" aria-hidden="true" x-show="celebrationActive">
+            <template x-for="p in celebrationParticles" :key="p.id">
+              <span
+                class="confetti-piece"
+                :data-tone="p.tone"
+                :style="`--tx: ${p.tx}; --ty: ${p.ty}; --rot: ${p.rot}; --delay: ${p.delay}`"
+              ></span>
+            </template>
+          </div>
           <span class="label">Skor</span>
           <span class="big-figure">
-            <span x-text="`${activeAttemptReview?.score ?? 0}%`"></span>
+            <span x-text="`${reviewDisplayScore ?? activeAttemptReview?.score ?? 0}%`"></span>
             <small x-text="`${activeAttemptReview?.correctCount ?? 0} dari ${activeAttemptReview?.totalCount ?? 0} benar`"></small>
           </span>
         </div>
@@ -53,6 +62,27 @@
           </div>
         </template>
       </div>
+
+      <template x-if="attemptOutcomeFeedback">
+        <div
+          class="outcome-banner"
+          :class="{
+            'outcome-banner--ok': attemptOutcomeFeedback.tone === 'ok',
+            'outcome-banner--review': attemptOutcomeFeedback.tone === 'review',
+            'outcome-banner--bad': attemptOutcomeFeedback.tone === 'bad',
+          }"
+        >
+          <div class="cluster cluster--tight">
+            <span
+              class="state"
+              :class="`state--${attemptOutcomeFeedback.tone}`"
+              x-text="attemptOutcomeFeedback.badge"
+            ></span>
+            <strong class="sub-title" x-text="attemptOutcomeFeedback.headline"></strong>
+          </div>
+          <p class="meta" style="color: var(--color-ink-2)" x-text="attemptOutcomeFeedback.body"></p>
+        </div>
+      </template>
     </header>
 
     <template x-if="activeAttemptReview?.moduleBreakdown && activeAttemptReview.moduleBreakdown.length > 1">

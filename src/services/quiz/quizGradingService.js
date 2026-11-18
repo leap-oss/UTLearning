@@ -2,12 +2,13 @@ import { eq, asc, desc, and, inArray } from 'drizzle-orm';
 import { getDb } from '../../db/client.js';
 import {
   modules,
+  studyPacks,
   questionSets,
   questions,
   quizAttempts,
   attemptAnswers,
 } from '../../db/schema.js';
-import { submitAttemptPayloadSchema } from './quizSchemas.js';
+import { submitAttemptPayloadSchema, checkQuestionPayloadSchema } from './quizSchemas.js';
 import { evaluateAndUpdateModuleStatus } from './topicMastery.js';
 
 /**
@@ -151,7 +152,7 @@ export async function submitQuizAttempt(questionSetId, rawPayload) {
   const score = Math.round((correctCount / totalCount) * 100);
   const now = new Date();
 
-  const savedAttempt = await db.transaction(async (tx) => {
+  const saved = await db.transaction(async (tx) => {
     await tx
       .delete(quizAttempts)
       .where(and(eq(quizAttempts.questionSetId, questionSetId), eq(quizAttempts.status, 'in_progress')));
@@ -180,14 +181,179 @@ export async function submitQuizAttempt(questionSetId, rawPayload) {
 
     await tx.insert(attemptAnswers).values(answerRows);
 
+    let statusTransition = null;
     if (qSet.moduleId) {
-      await evaluateAndUpdateModuleStatus(tx, qSet.moduleId);
+      statusTransition = await evaluateAndUpdateModuleStatus(tx, qSet.moduleId);
     }
 
-    return attempt;
+    return { attempt, statusTransition };
   });
 
-  return getAttemptReviewById(savedAttempt.id);
+  const review = await getAttemptReviewById(saved.attempt.id);
+  return {
+    ...review,
+    newlyMastered: Boolean(saved.statusTransition?.newlyMastered),
+    previousModuleStatus: saved.statusTransition?.previousStatus || null,
+    nextModuleStatus: saved.statusTransition?.nextStatus || null,
+  };
+}
+
+/**
+ * Checks a single question answer immediately without exposing keys for other questions.
+ * Explicitly disabled on exam_simulation sets to preserve simulated UAS exam conditions.
+ */
+export async function checkSingleQuestionAnswer(questionSetId, rawPayload) {
+  const payload = checkQuestionPayloadSchema.parse(rawPayload);
+  const db = getDb();
+
+  const [qSet] = await db
+    .select({ id: questionSets.id, setType: questionSets.setType })
+    .from(questionSets)
+    .where(eq(questionSets.id, questionSetId))
+    .limit(1);
+
+  if (!qSet) {
+    const err = new Error('Question set tidak ditemukan.');
+    err.statusCode = 404;
+    err.errorCode = 'QUESTION_SET_NOT_FOUND';
+    throw err;
+  }
+
+  if (qSet.setType === 'exam_simulation') {
+    const err = new Error(
+      'Mode cek jawaban langsung dinonaktifkan pada Simulasi UAS agar menyerupai kondisi ujian asli.'
+    );
+    err.statusCode = 403;
+    err.errorCode = 'EXAM_SIMULATION_LOCKED';
+    throw err;
+  }
+
+  const [q] = await db
+    .select()
+    .from(questions)
+    .where(and(eq(questions.id, payload.questionId), eq(questions.questionSetId, questionSetId)))
+    .limit(1);
+
+  if (!q) {
+    const err = new Error('Soal tidak ditemukan pada paket kuis ini.');
+    err.statusCode = 404;
+    err.errorCode = 'QUESTION_NOT_FOUND';
+    throw err;
+  }
+
+  const isCorrect = payload.selectedOption === String(q.correctOption || '').toUpperCase();
+  return {
+    questionId: q.id,
+    selectedOption: payload.selectedOption,
+    correctOption: q.correctOption,
+    isCorrect,
+    explanation: q.explanation,
+    sourceRefs: q.sourceRefsJson || [],
+  };
+}
+
+/**
+ * Builds a 5-question quick warmup set from saved module questions with zero AI cost.
+ */
+export async function createWarmupQuizSet(moduleId, { maxQuestions = 5 } = {}) {
+  const db = getDb();
+
+  const [mod] = await db
+    .select()
+    .from(modules)
+    .where(eq(modules.id, moduleId))
+    .limit(1);
+
+  if (!mod) {
+    const err = new Error('Modul tidak ditemukan.');
+    err.statusCode = 404;
+    err.errorCode = 'MODULE_NOT_FOUND';
+    throw err;
+  }
+
+  const rawRows = await db
+    .select({
+      q: questions,
+      setType: questionSets.setType,
+    })
+    .from(questions)
+    .innerJoin(questionSets, eq(questions.questionSetId, questionSets.id))
+    .where(eq(questions.moduleId, moduleId));
+
+  if (rawRows.length === 0) {
+    const err = new Error(
+      'Modul ini belum memiliki bank soal. Susun Study Pack terlebih dahulu.'
+    );
+    err.statusCode = 400;
+    err.errorCode = 'NO_QUESTIONS_AVAILABLE';
+    throw err;
+  }
+
+  const nonWarmup = rawRows.filter((row) => row.setType !== 'warmup');
+  const pool = nonWarmup.length > 0 ? nonWarmup : rawRows;
+
+  const deduped = [];
+  const seenPrompts = new Set();
+  for (const row of pool) {
+    const key = String(row.q.prompt || '').trim().toLowerCase().replace(/\s+/g, ' ');
+    if (!key || seenPrompts.has(key)) continue;
+    seenPrompts.add(key);
+    deduped.push(row.q);
+  }
+
+  for (let i = deduped.length - 1; i > 0; i -= 1) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [deduped[i], deduped[j]] = [deduped[j], deduped[i]];
+  }
+
+  const limit = Math.min(5, Math.max(1, Number(maxQuestions) || 5));
+  const selected = deduped.slice(0, limit);
+
+  const [latestPack] = await db
+    .select({ id: studyPacks.id })
+    .from(studyPacks)
+    .where(eq(studyPacks.moduleId, moduleId))
+    .orderBy(desc(studyPacks.version))
+    .limit(1);
+
+  const createdSet = await db.transaction(async (tx) => {
+    const [qSet] = await tx
+      .insert(questionSets)
+      .values({
+        moduleId: mod.id,
+        courseId: mod.courseId,
+        studyPackId: latestPack?.id || null,
+        setType: 'warmup',
+        title: `Pemanasan Kilat — Modul ${mod.moduleNumber} (${selected.length} soal)`,
+        metadataJson: {
+          isWarmup: true,
+          sourceQuestionCount: selected.length,
+        },
+        schemaVersion: 1,
+      })
+      .returning();
+
+    await tx.insert(questions).values(
+      selected.map((srcQ, idx) => ({
+        questionSetId: qSet.id,
+        moduleId: mod.id,
+        questionOrder: idx + 1,
+        topicLabel: srcQ.topicLabel,
+        learningObjective: srcQ.learningObjective,
+        questionType: srcQ.questionType || 'single_choice',
+        prompt: srcQ.prompt,
+        optionsJson: srcQ.optionsJson,
+        correctOption: srcQ.correctOption,
+        explanation: srcQ.explanation,
+        difficulty: srcQ.difficulty || 'medium',
+        sourceRefsJson: srcQ.sourceRefsJson || [],
+      }))
+    );
+
+    return qSet;
+  });
+
+  return getQuestionSetWithoutAnswerKey(createdSet.id);
 }
 
 export async function saveQuizDraft(questionSetId, { selections = {} } = {}) {

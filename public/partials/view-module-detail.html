@@ -328,6 +328,16 @@
             </select>
           </div>
           <div class="cluster cluster--tight">
+            <template x-if="availableFlashcards.length > 0">
+              <button
+                type="button"
+                class="btn btn--ghost"
+                @click="flashcardSession.active ? closeFlashcardSession() : startFlashcardSession()"
+                :aria-expanded="flashcardSession.active.toString()"
+              >
+                Mode Flashcard (<span class="figure" x-text="availableFlashcards.length"></span>)
+              </button>
+            </template>
             <button
               type="button"
               class="btn btn--ghost"
@@ -339,6 +349,79 @@
             <button type="button" @click="moduleTab = 'quiz'" class="btn btn--primary">Latihan kuis</button>
           </div>
         </div>
+
+        <template x-if="flashcardSession.active">
+          <section
+            class="flashcard-stage"
+            aria-labelledby="flashcard-heading"
+            @keydown.escape.window="closeFlashcardSession()"
+          >
+            <div class="split split--center">
+              <div class="stack-2xs">
+                <span class="label">Uji Ingatan Aktif · Tanpa Kuota AI</span>
+                <h2 id="flashcard-heading" class="section-title" style="font-size: var(--text-xl)">
+                  Mode Flashcard (<span class="figure" x-text="flashcardSession.rememberedCount"></span>/<span class="figure" x-text="flashcardSession.totalUnique"></span> ingat)
+                </h2>
+              </div>
+              <button type="button" class="btn btn--ghost btn--sm" @click="closeFlashcardSession()">Tutup flashcard</button>
+            </div>
+
+            <progress
+              class="native-progress"
+              :value="flashcardSession.rememberedCount"
+              :max="Math.max(1, flashcardSession.totalUnique)"
+              :aria-label="`${flashcardSession.rememberedCount} dari ${flashcardSession.totalUnique} kartu sudah diingat`"
+            ></progress>
+
+            <template x-if="currentFlashcard">
+              <div class="flashcard-card">
+                <div class="split split--center">
+                  <span class="tag" x-text="currentFlashcard.kind"></span>
+                  <span class="meta figure" x-text="`Tersisa ${flashcardSession.cards.length} kartu`"></span>
+                </div>
+
+                <div class="stack-xs">
+                  <div class="sub-title" style="font-size: var(--text-xl)" x-html="renderMath(currentFlashcard.front)"></div>
+                  <template x-if="!flashcardSession.revealed">
+                    <div>
+                      <button type="button" class="btn btn--primary" @click="revealFlashcard()">
+                        Lihat jawaban
+                      </button>
+                    </div>
+                  </template>
+                </div>
+
+                <template x-if="flashcardSession.revealed">
+                  <div class="flashcard-back">
+                    <div class="math-prose" x-html="renderMath(currentFlashcard.back)"></div>
+                    <template x-if="currentFlashcard.hint">
+                      <p class="meta" x-html="renderMath(currentFlashcard.hint)"></p>
+                    </template>
+                    <div class="cluster cluster--tight" style="padding-top: var(--space-xs)">
+                      <button type="button" class="btn btn--sm" @click="gradeFlashcard(false)">
+                        Ulangi nanti
+                      </button>
+                      <button type="button" class="btn btn--sm btn--primary" @click="gradeFlashcard(true)">
+                        Sudah ingat
+                      </button>
+                    </div>
+                  </div>
+                </template>
+              </div>
+            </template>
+
+            <template x-if="!currentFlashcard">
+              <div class="flashcard-card" style="place-items: center; text-align: center">
+                <p class="sub-title">Semua kartu flashcard selesai diingat!</p>
+                <p class="meta">Ingatan aktif Anda baru saja diuji ulang untuk modul ini.</p>
+                <div class="cluster cluster--tight">
+                  <button type="button" class="btn btn--sm" @click="startFlashcardSession()">Ulangi dek lagi</button>
+                  <button type="button" class="btn btn--sm btn--primary" @click="closeFlashcardSession()">Kembali membaca</button>
+                </div>
+              </div>
+            </template>
+          </section>
+        </template>
 
         <template x-if="unreviewedSourcesCount > 0">
           <div class="callout">
@@ -627,6 +710,11 @@
       <template x-if="(activeModule?.studyPacks?.length || 0) > 0">
         <div class="cluster cluster--tight">
           <span class="tag" style="background: var(--color-surface-2); border-color: var(--color-rule-2)" x-text="`${moduleFixedQuestionCount} soal (${moduleKbCountLabel})`"></span>
+          <template x-if="(activeModule?.questionSets?.length || 0) > 0">
+            <button type="button" @click="startWarmupQuiz(activeModule.id)" :disabled="Boolean(activeAiJob)" class="btn btn--sm">
+              Pemanasan 5 soal (Gratis AI)
+            </button>
+          </template>
           <button type="button" @click="generateExtraPracticeSet()" :disabled="Boolean(activeAiJob)" class="btn">
             Buat latihan adaptif
           </button>

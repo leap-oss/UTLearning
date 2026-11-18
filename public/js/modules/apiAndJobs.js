@@ -1,6 +1,25 @@
 window.AppModules = window.AppModules || {};
 
 window.AppModules.apiAndJobs = {
+  extractApiErrorMessage(data, status, fallback = 'Terjadi kesalahan pada server.') {
+    const nestedMsg =
+      (typeof data?.message === 'string' && data.message.trim()) ||
+      (typeof data?.error?.message === 'string' && data.error.message.trim()) ||
+      (typeof data?.error === 'string' && !/^[A-Z0-9_]{3,}$/.test(data.error) && data.error.trim()) ||
+      '';
+
+    if (status === 504 || status === 502 || /FUNCTION_INVOCATION_TIMEOUT/i.test(nestedMsg)) {
+      return `Batas waktu proses server terlampaui (HTTP ${status || 504}). Jika menggunakan Vercel (batas ~60 detik), unggah 1–2 gambar per batch atau jalankan via server lokal (npm run dev).`;
+    }
+    if (status === 413) {
+      return 'Total ukuran gambar melebihi batas payload server (HTTP 413). Kurangi jumlah foto atau perkecil ukuran gambar.';
+    }
+    if (nestedMsg) {
+      return nestedMsg;
+    }
+    return status ? `${fallback} (HTTP ${status})` : fallback;
+  },
+
   async fetchJson(url, options = {}, retryCount = 1) {
     const method = (options.method || 'GET').toUpperCase();
     const fetchOpts = { cache: 'no-store', ...options };
@@ -14,12 +33,12 @@ window.AppModules.apiAndJobs = {
             data = JSON.parse(rawText);
           } catch {
             if (!res.ok) {
-              throw new Error(`Server merespons HTTP ${res.status}.`);
+              throw new Error(this.extractApiErrorMessage({ error: rawText.slice(0, 120) }, res.status, `Server merespons HTTP ${res.status}.`));
             }
             throw new Error('Respons server belum lengkap, silakan coba lagi.');
           }
         } else if (!res.ok) {
-          throw new Error(`Server merespons HTTP ${res.status} (kosong).`);
+          throw new Error(this.extractApiErrorMessage({}, res.status, `Server merespons HTTP ${res.status} (kosong).`));
         }
 
         return { ok: res.ok, status: res.status, data };

@@ -223,6 +223,12 @@
             </h3>
             <div class="cluster">
               <span :class="moduleStatusBadgeClass(mod.status)" x-text="moduleStatusLabel(mod.status)"></span>
+              <template x-if="getModuleProgressItem(mod.id)?.needsFreshnessWarmup">
+                <span
+                  class="state state--review"
+                  x-text="`Perlu pemanasan · ${getModuleProgressItem(mod.id).daysSinceLastAttempt} hari lalu`"
+                ></span>
+              </template>
               <span class="meta">Diperbarui <span x-text="formatDateTime(mod.updatedAt)"></span></span>
             </div>
           </div>
@@ -248,6 +254,15 @@
           </div>
 
           <div class="row-actions">
+            <template x-if="getModuleProgressItem(mod.id)?.needsFreshnessWarmup">
+              <button
+                type="button"
+                class="btn btn--sm"
+                @click="startWarmupQuiz(mod.id)"
+              >
+                Pemanasan 5 soal
+              </button>
+            </template>
             <div class="menu" x-data="{ open: false }" @click.outside="open = false" @keydown.escape="open = false">
               <button
                 type="button"

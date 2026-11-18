@@ -119,6 +119,29 @@
               <span class="tag" style="background: var(--color-surface-2); border-color: var(--color-rule-2)" x-text="`Tahap ${quizCurrentPage + 1} dari ${quizTotalPages}`"></span>
             </template>
           </div>
+
+          <div class="instant-check-bar">
+            <template x-if="activeQuestionSet?.setType !== 'exam_simulation'">
+              <div class="cluster cluster--tight">
+                <button
+                  type="button"
+                  class="toggle-chip"
+                  @click="toggleInstantCheckMode()"
+                  :aria-pressed="instantCheckMode.toString()"
+                >
+                  <span class="toggle-chip__dot" aria-hidden="true"></span>
+                  <span>Cek langsung per soal</span>
+                </button>
+                <span class="meta">Umpan balik instan anti-jenuh saat latihan</span>
+              </div>
+            </template>
+            <template x-if="activeQuestionSet?.setType === 'exam_simulation'">
+              <span class="meta">Simulasi UAS: mode ujian penuh (cek langsung dinonaktifkan).</span>
+            </template>
+            <template x-if="sessionCorrectStreak > 0">
+              <span class="streak-chip" x-text="`Rangkaian benar: ${sessionCorrectStreak} beruntun`"></span>
+            </template>
+          </div>
         </header>
 
         <template x-for="(q, qIdx) in currentQuizPageQuestions" :key="q.id">
@@ -136,19 +159,60 @@
             <p class="question-prompt math-prose" :id="`q-prompt-${q.id}`" x-html="renderMath(q.prompt)"></p>
             <fieldset class="options" :aria-labelledby="`q-prompt-${q.id}`">
               <template x-for="opt in q.options || []" :key="opt.key">
-                <label class="option" :class="quizSelections[q.id] === opt.key ? 'is-selected' : ''">
+                <label
+                  class="option"
+                  :class="{
+                    'is-selected': quizSelections[q.id] === opt.key,
+                    'is-checked-ok': questionChecks[q.id] && !questionChecks[q.id].checking && questionChecks[q.id].correctOption === opt.key,
+                    'is-checked-bad': questionChecks[q.id] && !questionChecks[q.id].checking && !questionChecks[q.id].isCorrect && questionChecks[q.id].selectedOption === opt.key,
+                  }"
+                >
                   <input
                     type="radio"
                     :name="`q-${q.id}`"
                     :value="opt.key"
                     x-model="quizSelections[q.id]"
-                    @change="saveDraftProgress()"
+                    @change="onQuizOptionChanged(q.id)"
                   />
                   <span class="option-key" x-text="opt.key" aria-hidden="true"></span>
                   <span x-html="renderMath(opt.text)"></span>
                 </label>
               </template>
             </fieldset>
+
+            <template x-if="instantCheckMode && activeQuestionSet?.setType !== 'exam_simulation'">
+              <div class="stack-xs">
+                <template x-if="!questionChecks[q.id] || questionChecks[q.id].checking">
+                  <div>
+                    <button
+                      type="button"
+                      class="btn btn--sm"
+                      @click="checkSingleQuestion(q.id)"
+                      :disabled="!quizSelections[q.id] || Boolean(questionChecks[q.id]?.checking)"
+                      x-text="questionChecks[q.id]?.checking ? 'Memeriksa...' : 'Cek jawaban soal ini'"
+                    ></button>
+                  </div>
+                </template>
+
+                <template x-if="questionChecks[q.id] && !questionChecks[q.id].checking">
+                  <div
+                    class="question-check-box"
+                    :class="questionChecks[q.id].isCorrect ? 'question-check-box--ok' : 'question-check-box--bad'"
+                  >
+                    <div class="split split--center">
+                      <span
+                        :class="questionChecks[q.id].isCorrect ? 'state state--ok' : 'state state--bad'"
+                        x-text="questionChecks[q.id].isCorrect ? `Tepat · Kunci ${questionChecks[q.id].correctOption}` : `Kurang tepat · Kunci benar: ${questionChecks[q.id].correctOption}`"
+                      ></span>
+                      <template x-if="(questionChecks[q.id].sourceRefs || []).length > 0">
+                        <span class="meta" x-text="(questionChecks[q.id].sourceRefs || []).join(', ')"></span>
+                      </template>
+                    </div>
+                    <div class="math-prose meta" style="color: var(--color-ink)" x-html="renderMath(questionChecks[q.id].explanation)"></div>
+                  </div>
+                </template>
+              </div>
+            </template>
           </article>
         </template>
       </div>

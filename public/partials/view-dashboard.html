@@ -24,6 +24,132 @@
     </div>
   </header>
 
+  <template x-if="dailyFocus && !loadingCourses && !coursesError">
+    <section class="focus-panel" aria-labelledby="daily-focus-heading">
+      <div class="focus-head">
+        <div class="stack-2xs">
+          <span class="label">Ritme Belajar &amp; Target Harian</span>
+          <h2 id="daily-focus-heading" class="section-title">Fokus Hari Ini</h2>
+        </div>
+
+        <div class="focus-metrics">
+          <div class="focus-metric">
+            <span class="label">Kesiapan Semester</span>
+            <span class="focus-metric__val">
+              <span x-text="`${dailyFocus.summary?.readinessPercent ?? 0}%`"></span>
+              <span class="meta" style="font-family: var(--font-body); font-size: var(--text-xs)">
+                (<span class="figure" x-text="dailyFocus.summary?.masteredModules ?? 0"></span>/<span class="figure" x-text="dailyFocus.summary?.totalModules ?? 0"></span> modul dikuasai)
+              </span>
+            </span>
+          </div>
+
+          <div class="focus-metric">
+            <span class="label">Streak Aktif</span>
+            <span class="focus-metric__val">
+              <span class="figure" x-text="`${dailyFocus.streak?.currentStreakDays ?? 0} hari`"></span>
+              <span class="meta" style="font-family: var(--font-body); font-size: var(--text-xs)" x-text="dailyFocus.streak?.studiedToday ? `· ${dailyFocus.streak.todayDoneCount} kuis hari ini` : '· belum kuis hari ini'"></span>
+            </span>
+          </div>
+
+          <div class="streak-days" aria-label="Aktivitas belajar 7 hari terakhir">
+            <template x-for="day in dailyFocus.streak?.activeDaysLast7 || []" :key="day.dateKey">
+              <div
+                class="streak-day"
+                :class="{ 'is-active': day.count > 0, 'is-today': day.isToday }"
+                :aria-label="`${day.dayLabel}: ${day.count} sesi kuis`"
+                :title="`${day.dayLabel} (${day.dateKey}): ${day.count} kuis`"
+              >
+                <span class="streak-day__dot" aria-hidden="true"></span>
+                <span class="streak-day__label" x-text="day.dayLabel"></span>
+              </div>
+            </template>
+          </div>
+        </div>
+      </div>
+
+      <div class="uas-countdown">
+        <label for="uas-target-date" class="label" style="margin: 0">Target Tanggal UAS</label>
+        <input
+          id="uas-target-date"
+          type="date"
+          :value="uasExamDate"
+          @change="setUasExamDate($event.target.value)"
+        />
+        <template x-if="uasCountdownSummary">
+          <p class="meta">
+            <strong :class="uasCountdownSummary.urgent ? 'state state--review' : ''" x-text="uasCountdownSummary.daysLeftLabel"></strong>
+            &middot;
+            <span x-text="uasCountdownSummary.paceLabel"></span>
+          </p>
+        </template>
+        <template x-if="!uasCountdownSummary">
+          <p class="meta">Atur perkiraan tanggal UAS untuk melihat kecepatan target modul per hari.</p>
+        </template>
+      </div>
+
+      <template x-if="dailyFocus.slots && dailyFocus.slots.length > 0">
+        <div class="focus-grid">
+          <template x-for="slot in dailyFocus.slots" :key="`${slot.slotType}-${slot.moduleId}`">
+            <article
+              class="mission-card"
+              :class="{
+                'mission-card--quick': slot.slotType === 'quick_win',
+                'mission-card--conquest': slot.slotType === 'conquest',
+                'mission-card--increment': slot.slotType === 'increment',
+              }"
+            >
+              <div class="stack-xs">
+                <div class="split split--center">
+                  <span class="tag" x-text="slot.badgeLabel"></span>
+                  <span class="meta figure" x-text="slot.durationHint"></span>
+                </div>
+                <h3 class="sub-title" x-text="slot.headline"></h3>
+                <p class="meta" style="color: var(--color-ink-2)" x-text="slot.reason"></p>
+              </div>
+              <div class="cluster cluster--tight">
+                <button
+                  type="button"
+                  class="btn btn--sm"
+                  :class="slot.slotType === 'increment' ? '' : 'btn--primary'"
+                  @click="executeFocusAction(slot)"
+                  x-text="slot.ctaLabel"
+                ></button>
+                <template x-if="slot.secondaryActionType && slot.secondaryCtaLabel">
+                  <button
+                    type="button"
+                    class="btn btn--sm btn--ghost"
+                    @click="executeFocusAction(slot, slot.secondaryActionType)"
+                    x-text="slot.secondaryCtaLabel"
+                  ></button>
+                </template>
+              </div>
+            </article>
+          </template>
+        </div>
+      </template>
+
+      <template x-if="dailyFocus.staleMasteredModules && dailyFocus.staleMasteredModules.length > 0">
+        <div class="stale-strip">
+          <p class="meta">
+            <span class="state state--review">Perlu pemanasan (&ge; 14 hari)</span>
+            <span x-text="`${dailyFocus.summary.staleMasteredCount} modul Dikuasai belum diulang lebih dari 2 minggu.`"></span>
+          </p>
+          <div class="cluster cluster--tight">
+            <template x-for="stale in dailyFocus.staleMasteredModules.slice(0, 3)" :key="stale.moduleId">
+              <button
+                type="button"
+                class="btn btn--sm"
+                :disabled="!stale.hasQuestions"
+                @click="startWarmupQuiz(stale.moduleId)"
+                x-text="`${stale.courseCode} M${stale.moduleNumber} (${stale.daysSinceLastAttempt}h)`"
+              ></button>
+            </template>
+          </div>
+        </div>
+      </template>
+    </section>
+  </template>
+
   <template x-if="loadingCourses && courses.length === 0">
     <div class="cluster" role="status">
       <span class="spinner keep-motion" aria-hidden="true"></span>
