@@ -43,8 +43,9 @@ Tugas Anda:
    - "reviewGuidance": Panduan bagian halaman/materi BMP yang perlu diperiksa.
 2. LATIHAN REMEDIAL:
    Rancang ${targetCount} soal remedial pilihan ganda baru (4 opsi: A, B, C, D) yang menguji learning objective yang sama dari topik yang salah, namun dengan angka/skenario/distraktor/konteks baru yang berbeda (JANGAN mengulang kalimat soal asli).
-3. STANDAR NOTASI MATEMATIKA (LaTeX):
-   Tuliskan seluruh persamaan, rumus, pecahan, pangkat, himpunan, dan simbol logika pada "diagnosticFeedback", "prompt", "options", dan "explanation" dalam notasi LaTeX standar ($...$ untuk inline dan $$...$$ untuk rumus blok), serta sertakan langkah penyelesaian step-by-step di "explanation".
+3. STANDAR NOTASI MATEMATIKA (LaTeX) & TEKS ARAB/AYAT:
+   - Tuliskan seluruh persamaan, rumus, pecahan, pangkat, himpunan, dan simbol logika pada "diagnosticFeedback", "prompt", "options", dan "explanation" dalam notasi LaTeX standar ($...$ untuk inline dan $$...$$ untuk rumus blok), serta sertakan langkah penyelesaian step-by-step di "explanation".
+   - Jika materi memuat dalil Al-Qur'an/Hadis, pertahankan aksara Arab asli (Unicode berharakat, tanpa $...$), rujukan surah/ayat (QS. ...), dan terjemahannya secara akurat.
 4. Sertakan "learningObjective", "questionType" ('scenario_based', 'conceptual_application', 'single_choice'), tingkat "difficulty", dan "sourceRefs" pada setiap soal.`;
 
   const prompt = `Hasil Pengerjaan Kuis: Skor ${attemptReview.score}% (${attemptReview.correctCount}/${attemptReview.totalCount})
@@ -261,7 +262,8 @@ Aturan wajib:
 3. Setiap soal wajib mencantumkan "moduleNumber" yang sesuai dengan modul asalnya, "topicLabel", "explanation", dan "sourceRefs".
 4. Tingkat kesulitan target: ${difficulty}.
 5. Untuk soal matematika/hitungan/logika simbolik, tuliskan seluruh rumus, pecahan, pangkat, himpunan, dan simbol logika pada "prompt", "options", dan "explanation" dalam notasi LaTeX standar ($...$ untuk inline dan $$...$$ untuk rumus blok) serta uraikan langkah penyelesaian step-by-step di "explanation".
-6. Simulasi ini adalah latihan komprehensif dari materi yang tersedia, bukan prediksi soal UAS resmi. Jangan mengarang konsep di luar ringkasan modul yang diberikan.`;
+6. Jika modul memuat dalil Al-Qur'an/Hadis (mis. Pendidikan Agama Islam), pertahankan lafaz Arab asli (Unicode berharakat, tanpa $...$), rujukan surah/ayat (QS. ...), dan artinya secara akurat di "prompt", "options", dan "explanation".
+7. Simulasi ini adalah latihan komprehensif dari materi yang tersedia, bukan prediksi soal UAS resmi. Jangan mengarang konsep di luar ringkasan modul yang diberikan.`;
 
   const prompt = `Mata Kuliah: ${courseRecord.code} - ${courseRecord.name}
 Jumlah Soal Wajib: ${questionCount}

@@ -76,6 +76,7 @@
   --font-display: "Newsreader", Georgia, "Times New Roman", serif;
   --font-body: "Host Grotesk", ui-sans-serif, system-ui, sans-serif;
   --font-outlier: "Atkinson Hyperlegible Mono", ui-monospace, monospace;
+  --font-arabic: "Noto Naskh Arabic", "Amiri", "Traditional Arabic", "Geeza Pro", serif;
   --tracking-display: -0.012em; --display-weight: 400;
 
   /* Shape */

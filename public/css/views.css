@@ -1105,3 +1105,39 @@ label.checklist-item { cursor: pointer; }
   min-block-size: 32px;
   min-inline-size: 32px;
 }
+
+/* ==================== ARABIC / AYAT RTL TYPOGRAPHY ==================== */
+.arabic-verse {
+  display: block;
+  direction: rtl;
+  unicode-bidi: isolate;
+  text-align: start;
+  font-family: var(--font-arabic);
+  font-size: 1.35rem;
+  line-height: 2.15;
+  padding: var(--space-sm) var(--space-md);
+  margin-block: var(--space-xs);
+  border-inline-start: 2px solid var(--color-accent);
+  border-radius: var(--radius-xs);
+  background: var(--color-paper-3);
+  color: var(--color-ink);
+  overflow-wrap: break-word;
+}
+
+.arabic-inline {
+  display: inline;
+  direction: rtl;
+  unicode-bidi: isolate;
+  font-family: var(--font-arabic);
+  font-size: 1.18em;
+  line-height: 1.9;
+  font-size-adjust: from-font;
+  color: var(--color-ink);
+}
+
+@supports not (font-size-adjust: from-font) {
+  .arabic-inline {
+    font-size: 1.25em;
+    line-height: 2;
+  }
+}

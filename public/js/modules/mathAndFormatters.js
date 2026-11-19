@@ -111,6 +111,46 @@ window.AppModules.mathAndFormatters = {
       .replace(/'/g, '&#39;');
   },
 
+  wrapArabicScriptSegments(escapedHtml) {
+    if (!escapedHtml || !/[\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF\uFB50-\uFDFF\uFE70-\uFEFF]/.test(escapedHtml)) {
+      return escapedHtml;
+    }
+
+    const ARABIC_CHAR_RE = /[\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF\uFB50-\uFDFF\uFE70-\uFEFF]/;
+    const ARABIC_LETTER_RE = /[\u0621-\u064A\u0671-\u06D3]/g;
+    const ARABIC_RUN_RE =
+      /([\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF\uFB50-\uFDFF\uFE70-\uFEFF\uFD3E\uFD3F](?:[\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF\uFB50-\uFDFF\uFE70-\uFEFF\uFD3E\uFD3F\u0640\u064B-\u065F\u0670\u06D6-\u06ED\s،؛؟«»]*[\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF\uFB50-\uFDFF\uFE70-\uFEFF\uFD3E\uFD3F\u064B-\u065F\u0670\u06D6-\u06ED])?)/g;
+
+    return escapedHtml
+      .split('\n')
+      .map((line) => {
+        if (!ARABIC_CHAR_RE.test(line)) return line;
+
+        const plainNoEntities = line
+          .replace(/<[^>]+>/g, '')
+          .replace(/&[a-z#0-9]+;/gi, '');
+        const hasLatin = /[A-Za-z]/.test(plainNoEntities);
+        const startsWithNumberPrefix = /^\s*\d{1,2}[).]\s+/.test(plainNoEntities);
+        const arabicLetterCount = (plainNoEntities.match(ARABIC_LETTER_RE) || []).length;
+
+        if (!hasLatin && !startsWithNumberPrefix && arabicLetterCount >= 4) {
+          return `<span class="arabic-verse" dir="rtl" lang="ar">${line.trim()}</span>`;
+        }
+
+        return line
+          .split(/(<[^>]+>)/g)
+          .map((part, idx) => {
+            if (idx % 2 === 1 || !ARABIC_CHAR_RE.test(part)) return part;
+            return part.replace(
+              ARABIC_RUN_RE,
+              '<span class="arabic-inline" dir="rtl" lang="ar">$1</span>'
+            );
+          })
+          .join('');
+      })
+      .join('\n');
+  },
+
   formatPlainTextSegment(str) {
     let escaped = this.escapeHtml(str);
     // Strip markdown heading hashes (#, ##, ###) and render heading text bold
@@ -121,7 +161,7 @@ window.AppModules.mathAndFormatters = {
     escaped = escaped.replace(/\*\*([^*\n]+)\*\*/g, '<strong>$1</strong>');
     // Italic *word* (avoiding multiplication like a * b or (*))
     escaped = escaped.replace(/(?<![*\w])\*([A-Za-z0-9_][^*\n]*?[A-Za-z0-9_])\*(?![*\w])/g, '<em>$1</em>');
-    return escaped;
+    return this.wrapArabicScriptSegments(escaped);
   },
 
   renderInlineMathSegment(rawSegment) {
@@ -279,8 +319,9 @@ window.AppModules.mathAndFormatters = {
   splitCollapsedProseLine(line) {
     if (!line || line.length <= 520 || this.isTableRowLine(line)) return line;
     if (/^\s*@@(?:FLOWCHART|CODEBLOCK)_\d+@@\s*$/.test(line)) return line;
+    if (/[\u0600-\u06FF]/.test(line) && !/[A-Za-z]/.test(line)) return line;
 
-    const ABBR_RE = /(?:^|\s|\()(?:mis|dst|dll|dkk|hal|no|dr|prof|s\.d|a\.n|u\.p|e\.g|i\.e|vs|[A-Z]|[1-9]\d?)\.$/i;
+    const ABBR_RE = /(?:^|\s|\()(?:mis|dst|dll|dkk|hal|no|dr|prof|s\.d|a\.n|u\.p|e\.g|i\.e|vs|qs|hr|swt|saw|ra|as|[A-Z]|[1-9]\d?)\.$/i;
     const TRANSITION_RE =
       /^(?:Sementara itu|Selain itu|Berbeda dengan|Secara umum|Pada (?:sistem operasi|metode|konsep|tahap|bagian)|Dalam (?:konteks|manajemen|hal)|Di sisi lain|Untuk (?:mengubah|menggunakan|mengatur|membuat|mengenali)|Sebagai (?:contoh|pembanding)|Namun|Oleh karena itu|Dengan demikian|Apabila|Terdapat|Konfigurasi)\b/i;
 

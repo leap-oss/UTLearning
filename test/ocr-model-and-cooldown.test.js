@@ -436,3 +436,76 @@ test('Frontend buildExtractionBatches keeps up to 15 small images in 1 request a
     globalThis.fetch = origFetch;
   }
 });
+
+test('Arabic / Ayat support: OCR normalization, MCQ parsing, Study Pack prompt, and frontend RTL/BiDi rendering', async () => {
+  const { buildSystemInstruction } = await import('../src/services/studyPack/kbPlanner.js');
+
+  // 1. OCR normalizer & deterministic MCQ parser handle Arabic verses and Arabic options cleanly
+  const rawArabicOcr = [
+    'Dalil Al-Qur\'an tentang keesaan Allah:',
+    '',
+    'قُلْ هُوَ اللَّهُ أَحَدٌ',
+    'Artinya: Katakanlah (Muhammad), Dialah Allah, Yang Maha Esa (QS. Al-Ikhlas [112]: 1).',
+    '',
+    '1) Potongan ayat yang menegaskan keesaan Allah adalah ....',
+    '',
+    'A. قُلْ هُوَ اللَّهُ أَحَدٌ',
+    '',
+    'B. الْحَمْدُ لِلَّهِ رَبِّ الْعَالَمِينَ',
+    '',
+    'C. إِيَّاكَ نَعْبُدُ وَإِيَّاكَ نَسْتَعِينُ',
+    '',
+    'D. مَالِكِ يَوْمِ الدِّينِ',
+  ].join('\n');
+
+  const normalized = normalizeExtractedText(rawArabicOcr);
+  assert.ok(normalized.includes('قُلْ هُوَ اللَّهُ أَحَدٌ'), 'Arabic harakat must stay intact');
+  assert.ok(
+    normalized.includes('adalah ....\nA. قُلْ هُوَ اللَّهُ أَحَدٌ\nB. الْحَمْدُ لِلَّهِ رَبِّ الْعَالَمِينَ'),
+    'Arabic MCQ options A..D must collapse blank gaps to single newline'
+  );
+
+  const parsedQs = extractTranscribedQuestionsFromText(normalized);
+  assert.equal(parsedQs.length, 1);
+  assert.equal(parsedQs[0].options.length, 4);
+  assert.equal(parsedQs[0].options[0].text, 'قُلْ هُوَ اللَّهُ أَحَدٌ');
+
+  // 2. Study Pack system instruction includes explicit Arabic/Ayat preservation rule
+  const sysPrompt = buildSystemInstruction({
+    isFinalBatch: true,
+    totalQuestionCount: 10,
+    kbTitles: 'KB 1: Ketuhanan',
+  });
+  assert.ok(sysPrompt.includes('AYAT AL-QUR\'AN'), 'Study Pack prompt must include Arabic/Ayat directive');
+
+  // 3. Frontend renderMath wraps standalone verses as .arabic-verse (dir="rtl" lang="ar") and mixed text as .arabic-inline
+  const win = { AppModules: {} };
+  const mathCode = fs.readFileSync(
+    path.join(projectRoot, 'public/js/modules/mathAndFormatters.js'),
+    'utf8'
+  );
+  new Function('window', mathCode)(win);
+  const fmt = win.AppModules.mathAndFormatters;
+
+  const verseHtml = fmt.renderMath('بِسْمِ اللَّهِ الرَّحْمَٰنِ الرَّحِيمِ\nArtinya: Dengan nama Allah (QS. Al-Fatihah: 1).');
+  assert.ok(
+    verseHtml.includes('<span class="arabic-verse" dir="rtl" lang="ar">بِسْمِ اللَّهِ الرَّحْمَٰنِ الرَّحِيمِ</span>'),
+    'Standalone Arabic verse must render with RTL block class and lang="ar"'
+  );
+
+  const inlineHtml = fmt.renderMath('Lafaz قُلْ هُوَ اللَّهُ أَحَدٌ (QS. Al-Ikhlas: 1) menegaskan tauhid.');
+  assert.ok(
+    inlineHtml.includes('<span class="arabic-inline" dir="rtl" lang="ar">قُلْ هُوَ اللَّهُ أَحَدٌ</span> (QS. Al-Ikhlas: 1)'),
+    'Inline Arabic phrase must be BiDi-isolated without swallowing following Latin parentheses'
+  );
+
+  const optionHtml = fmt.renderMath('A. قُلْ هُوَ اللَّهُ أَحَدٌ');
+  assert.ok(
+    optionHtml.includes('A. <span class="arabic-inline" dir="rtl" lang="ar">قُلْ هُوَ اللَّهُ أَحَدٌ</span>'),
+    'Arabic MCQ option must keep LTR option key and isolate Arabic text'
+  );
+
+  // Verify index.html loads Noto Naskh Arabic font
+  const indexHtml = fs.readFileSync(path.join(projectRoot, 'public/index.html'), 'utf8');
+  assert.ok(indexHtml.includes('Noto+Naskh+Arabic'), 'index.html must load Noto Naskh Arabic web font');
+});
