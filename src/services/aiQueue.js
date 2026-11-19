@@ -271,9 +271,12 @@ export class AiJobQueue {
             searchGroundingUsed: false,
           });
 
-          // Schema validation failure gets at most 1 controlled retry (max 2 total attempts)
+          // Schema validation failure gets at most 1 controlled retry, EXCEPT RECITATION which already had anti-recitation handling
+          const isRecitationError =
+            err?.finishReason === 'RECITATION' || /RECITATION/i.test(String(err?.message || ''));
           const allowSchemaRetry =
             classified.errorCode === 'OUTPUT_SCHEMA_INVALID' &&
+            !isRecitationError &&
             attempt < Math.min(2, maxAttempts);
 
           const canRetry =

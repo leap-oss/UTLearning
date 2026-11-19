@@ -75,6 +75,13 @@ export const DEFAULT_GEMINI_MODEL_CHAIN = [
   'gemini-3.5-flash-lite',
 ];
 
+export const DEFAULT_GEMINI_OCR_MODEL_CHAIN = [
+  'gemini-3.5-flash-lite',
+  'gemini-3.8-flash',
+  'gemini-3.6-flash',
+  'gemini-4-hydrogen',
+];
+
 export function parseFallbackModels(env = process.env) {
   const raw = (env?.GEMINI_FALLBACK_MODELS || '').trim();
   const primary = (env?.GEMINI_MODEL || '').trim() || DEFAULT_GEMINI_MODEL_CHAIN[0];
@@ -87,6 +94,18 @@ export function parseFallbackModels(env = process.env) {
   return Array.from(new Set([primary, ...list]));
 }
 
+export function parseOcrFallbackModels(env = process.env) {
+  const raw = (env?.GEMINI_OCR_FALLBACK_MODELS || '').trim();
+  const primary = (env?.GEMINI_OCR_MODEL || '').trim() || DEFAULT_GEMINI_OCR_MODEL_CHAIN[0];
+  const list = raw
+    ? raw
+        .split(/[\n,;]+/)
+        .map((m) => m.trim())
+        .filter(Boolean)
+    : DEFAULT_GEMINI_OCR_MODEL_CHAIN;
+  return Array.from(new Set([primary, ...list]));
+}
+
 export function getEnvConfig() {
   const rawDbUrl = (process.env.DATABASE_URL || '').trim();
   const rawDirectUrl = (process.env.DIRECT_URL || '').trim();
@@ -94,6 +113,8 @@ export function getEnvConfig() {
   const apiKeys = parseApiKeys(process.env);
   const geminiModel = (process.env.GEMINI_MODEL || '').trim() || DEFAULT_GEMINI_MODEL_CHAIN[0];
   const geminiFallbackModels = parseFallbackModels(process.env);
+  const geminiOcrModel = (process.env.GEMINI_OCR_MODEL || '').trim() || DEFAULT_GEMINI_OCR_MODEL_CHAIN[0];
+  const geminiOcrFallbackModels = parseOcrFallbackModels(process.env);
 
   return {
     port: parsePositiveInt(process.env.PORT, 3000),
@@ -105,6 +126,8 @@ export function getEnvConfig() {
     geminiApiKeyCount: apiKeys.length,
     geminiModel,
     geminiFallbackModels,
+    geminiOcrModel,
+    geminiOcrFallbackModels,
     geminiThinkingLevel: (process.env.GEMINI_THINKING_LEVEL || 'low').trim(),
     aiMaxConcurrentJobs: parsePositiveInt(process.env.AI_MAX_CONCURRENT_JOBS, 1),
     aiMaxQueuedJobs: parsePositiveInt(process.env.AI_MAX_QUEUED_JOBS, 3),

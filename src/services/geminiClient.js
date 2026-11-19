@@ -5,6 +5,11 @@ import crypto from 'node:crypto';
 import dotenv from 'dotenv';
 import { GoogleGenAI } from '@google/genai';
 import { getEnvConfig, parseApiKeys, DEFAULT_GEMINI_MODEL_CHAIN } from '../config/env.js';
+import {
+  loadActiveRemoteCooldowns,
+  upsertRemoteCooldownBatch,
+  deleteRemoteCooldowns,
+} from './aiCooldownStore.js';
 
 const DEFAULT_COOLDOWN_CACHE_PATH = path.join(os.tmpdir(), 'ut-learning-gemini-cooldowns.json');
 
@@ -61,6 +66,10 @@ export class GeminiApiKeyPool {
         : process.env.NODE_ENV === 'test'
           ? null
           : DEFAULT_COOLDOWN_CACHE_PATH;
+    this.enableRemoteSync =
+      options.enableRemoteSync !== undefined
+        ? Boolean(options.enableRemoteSync)
+        : process.env.NODE_ENV !== 'test';
     this._persistenceLoaded = false;
   }
 
@@ -210,7 +219,27 @@ export class GeminiApiKeyPool {
     return client;
   }
 
-  markCooldown(key, durationMs = 60000, model = '*', { escalateRepeated = false } = {}) {
+  async syncRemoteCooldowns({ force = false } = {}) {
+    if (!this.enableRemoteSync) return;
+    const remote = await loadActiveRemoteCooldowns({ force });
+    if (!remote) return;
+    const now = Date.now();
+    for (const [entryKey, untilMs] of remote.entries()) {
+      if (untilMs > now) {
+        const prev = this.cooldowns.get(entryKey) || 0;
+        if (untilMs > prev) {
+          this.cooldowns.set(entryKey, untilMs);
+        }
+      }
+    }
+  }
+
+  markCooldown(
+    key,
+    durationMs = 60000,
+    model = '*',
+    { escalateRepeated = false, reason = 'cooldown', deferRemote = false } = {}
+  ) {
     this._ensureLoaded();
     const streakKey = this._cooldownKey(key, model);
     let effectiveDurationMs = durationMs;
@@ -241,17 +270,52 @@ export class GeminiApiKeyPool {
       this.currentIndex = ((idx !== -1 ? idx : this.currentIndex) + 1) % this.keys.length;
     }
     this._savePersistence();
+    if (!deferRemote && this.enableRemoteSync && effectiveDurationMs >= 15_000) {
+      upsertRemoteCooldownBatch([{ cooldownKey: streakKey, expiresAtMs: until, reason }]).catch(() => {});
+    }
     return effectiveDurationMs;
+  }
+
+  async persistCooldown(key, durationMs, model = '*', { escalateRepeated = false, reason = 'cooldown' } = {}) {
+    const appliedMs = this.markCooldown(key, durationMs, model, {
+      escalateRepeated,
+      reason,
+      deferRemote: true,
+    });
+    if (this.enableRemoteSync && appliedMs >= 15_000) {
+      const streakKey = this._cooldownKey(key, model);
+      const until = this.cooldowns.get(streakKey) || Date.now() + appliedMs;
+      await upsertRemoteCooldownBatch([{ cooldownKey: streakKey, expiresAtMs: until, reason }]).catch(() => {});
+    }
+    return appliedMs;
+  }
+
+  async persistModelCooldown(keys = [], durationMs = 15 * 60 * 1000, model = '*', reason = 'timeout') {
+    const entries = [];
+    for (const k of keys) {
+      const appliedMs = this.markCooldown(k, durationMs, model, {
+        escalateRepeated: reason === 'timeout',
+        reason,
+        deferRemote: true,
+      });
+      const streakKey = this._cooldownKey(k, model);
+      const until = this.cooldowns.get(streakKey) || Date.now() + appliedMs;
+      entries.push({ cooldownKey: streakKey, expiresAtMs: until, reason });
+    }
+    if (this.enableRemoteSync && entries.length > 0) {
+      await upsertRemoteCooldownBatch(entries).catch(() => {});
+    }
   }
 
   markSuccess(key, model = '*') {
     this._ensureLoaded();
-    const hadLongCooldown =
-      this.cooldowns.has(this._cooldownKey(key, model)) || this.cooldowns.has(this._cooldownKey(key, '*'));
-    this.cooldowns.delete(this._cooldownKey(key, model));
-    this.cooldowns.delete(this._cooldownKey(key, '*'));
+    const modelKey = this._cooldownKey(key, model);
+    const starKey = this._cooldownKey(key, '*');
+    const hadLongCooldown = this.cooldowns.has(modelKey) || this.cooldowns.has(starKey);
+    this.cooldowns.delete(modelKey);
+    this.cooldowns.delete(starKey);
     this.cooldowns.delete(key);
-    this.failureStreaks.delete(this._cooldownKey(key, model));
+    this.failureStreaks.delete(modelKey);
     // Round-robin advance so consecutive calls spread RPM/RPD evenly across all keys
     if (this.keys.length > 1) {
       const idx = this.keys.indexOf(key);
@@ -261,6 +325,9 @@ export class GeminiApiKeyPool {
     }
     if (hadLongCooldown) {
       this._savePersistence();
+      if (this.enableRemoteSync) {
+        deleteRemoteCooldowns([modelKey, starKey]).catch(() => {});
+      }
     }
   }
 
@@ -546,6 +613,8 @@ export async function generateStructuredContent({
   thinkingLevel = null,
   enableGoogleSearch = false,
   model: modelOverride = null,
+  fallbackModels = null,
+  failFastOnRecitation = false,
 }) {
   const envConfig = getEnvConfig();
   const maxOutputTokens = getMaxOutputTokensForTask(taskType);
@@ -560,13 +629,18 @@ export async function generateStructuredContent({
     throw err;
   }
 
+  await pool.syncRemoteCooldowns();
+
   const candidateModels = modelOverride
     ? [modelOverride]
-    : Array.isArray(envConfig.geminiFallbackModels) && envConfig.geminiFallbackModels.length > 0
-      ? envConfig.geminiFallbackModels
-      : DEFAULT_GEMINI_MODEL_CHAIN;
+    : Array.isArray(fallbackModels) && fallbackModels.length > 0
+      ? fallbackModels
+      : Array.isArray(envConfig.geminiFallbackModels) && envConfig.geminiFallbackModels.length > 0
+        ? envConfig.geminiFallbackModels
+        : DEFAULT_GEMINI_MODEL_CHAIN;
 
   const maxAttemptsPerModel = Math.max(1, keys.length);
+  const vercelDeadlineMs = process.env.VERCEL ? Date.now() + 54_000 : null;
   let lastErr = null;
 
   for (let mIdx = 0; mIdx < candidateModels.length; mIdx++) {
@@ -605,15 +679,21 @@ export async function generateStructuredContent({
     let shouldFailoverToNextModel = false;
     const attemptedKeys = new Set();
     const isLightTask = taskType === 'extract_toc_modules' || taskType === 'generate_remedial';
-    const requestTimeoutMs = process.env.VERCEL
+    const isOcrTask = taskType === 'extract_sources';
+    const baseTimeoutMs = process.env.VERCEL
       ? hasMoreModels
-        ? 35_000
-        : 48_000
+        ? 22_000
+        : 32_000
       : isLightTask
         ? 45_000
-        : 110_000;
+        : isOcrTask
+          ? 55_000
+          : 110_000;
 
     for (let attempt = 0; attempt < maxAttemptsPerModel; attempt++) {
+      const requestTimeoutMs = vercelDeadlineMs
+        ? Math.min(baseTimeoutMs, Math.max(8_000, vercelDeadlineMs - Date.now()))
+        : baseTimeoutMs;
       const keyInfo = pool.getActiveKeyInfo(model);
       if (attemptedKeys.has(keyInfo.key) || (keyInfo.allOnCooldown && (attempt > 0 || hasMoreModels))) {
         if (hasMoreModels) {
@@ -753,8 +833,9 @@ export async function generateStructuredContent({
               ? 'kuota harian habis (RPD)'
               : 'rate limit sementara (RPM)';
 
-          const appliedMs = pool.markCooldown(keyInfo.key, baseCooldownMs, isAuth ? '*' : model, {
+          const appliedMs = await pool.persistCooldown(keyInfo.key, baseCooldownMs, isAuth ? '*' : model, {
             escalateRepeated: kind === 'rate_limit',
+            reason: kind,
           });
 
           if (keys.length > 1 && attempt < maxAttemptsPerModel - 1 && !pool.areAllKeysOnCooldown(model)) {
@@ -775,19 +856,26 @@ export async function generateStructuredContent({
         }
 
         if (kind === 'timeout') {
-          // Model endpoint timed out — skip retrying other keys on the same stalled model tier when fallbacks exist
-          const timeoutCooldownMs = 3 * 60 * 1000;
+          // Persist timeout cooldown (15m, escalating on repeats) to memory, /tmp, and Neon DB so subsequent requests skip immediately
+          const timeoutCooldownMs = 15 * 60 * 1000;
           if (hasMoreModels) {
-            for (const k of keys) {
-              pool.markCooldown(k, timeoutCooldownMs, model);
-            }
+            await pool.persistModelCooldown(keys, timeoutCooldownMs, model, 'timeout');
             console.warn(
-              `[geminiClient] [${model}] Request timeout (${Math.round(requestTimeoutMs / 1000)}d). Melewati tier ini selama 3m dan beralih ke "${candidateModels[mIdx + 1]}"...`
+              `[geminiClient] [${model}] Request timeout (${Math.round(requestTimeoutMs / 1000)}d). Ditandai cooldown 15m dan beralih ke "${candidateModels[mIdx + 1]}"...`
             );
             shouldFailoverToNextModel = true;
             break;
           }
-          pool.markCooldown(keyInfo.key, 30 * 1000, model);
+          const appliedMs = await pool.persistCooldown(keyInfo.key, timeoutCooldownMs, model, {
+            escalateRepeated: true,
+            reason: 'timeout',
+          });
+          if (keys.length > 1 && attempt < maxAttemptsPerModel - 1 && !pool.areAllKeysOnCooldown(model)) {
+            console.warn(
+              `[geminiClient] [${model}] API Key #${keyInfo.index + 1}/${keyInfo.total} (${maskApiKey(keyInfo.key)}) timeout (ditandai ${formatDurationShort(appliedMs)}). Skip ke API key berikutnya...`
+            );
+            continue;
+          }
           throw attemptErr;
         }
 
@@ -814,6 +902,9 @@ export async function generateStructuredContent({
         }
 
         if (kind === 'output_invalid') {
+          if (failFastOnRecitation && attemptErr?.finishReason === 'RECITATION') {
+            throw attemptErr;
+          }
           // Rotate key index without long lockouts, then immediately failover to next model tier
           pool.markCooldown(keyInfo.key, 15 * 1000, model);
           if (hasMoreModels) {

@@ -94,10 +94,10 @@ window.AppModules.sourcesAndExtraction = {
       return 0;
     }
 
-    const MAX_FILES_PER_REQUEST = 15;
-    const remainingSlots = MAX_FILES_PER_REQUEST - this.stagedFiles.length;
+    const MAX_STAGED_FILES = 40;
+    const remainingSlots = MAX_STAGED_FILES - this.stagedFiles.length;
     if (remainingSlots <= 0) {
-      this.showError(`Maksimal ${MAX_FILES_PER_REQUEST} gambar dalam 1 request ekstraksi OCR.`);
+      this.showError(`Maksimal ${MAX_STAGED_FILES} gambar dalam satu antrean ekstraksi OCR.`);
       return 0;
     }
 
@@ -116,17 +116,17 @@ window.AppModules.sourcesAndExtraction = {
 
     if (accepted.length > remainingSlots) {
       this.showError(
-        `Maksimal ${MAX_FILES_PER_REQUEST} gambar per request ekstraksi. ${accepted.length - remainingSlots} gambar terakhir tidak dimasukkan.`
+        `Maksimal ${MAX_STAGED_FILES} gambar per antrean ekstraksi. ${accepted.length - remainingSlots} gambar terakhir tidak dimasukkan.`
       );
     } else if (rejectedCount > 0) {
       this.showError(`${acceptedFiles.length} gambar ditambahkan, ${rejectedCount} file non-gambar diabaikan.`);
     } else if (origin === 'paste') {
       this.showNotice(
-        `${acceptedFiles.length} gambar ditempel dari clipboard (total antrean ${this.stagedFiles.length}/15).`
+        `${acceptedFiles.length} gambar ditempel dari clipboard (total antrean ${this.stagedFiles.length}/${MAX_STAGED_FILES}).`
       );
     } else if (origin === 'drop') {
       this.showNotice(
-        `${acceptedFiles.length} gambar ditambahkan lewat drag & drop (total antrean ${this.stagedFiles.length}/15).`
+        `${acceptedFiles.length} gambar ditambahkan lewat drag & drop (total antrean ${this.stagedFiles.length}/${MAX_STAGED_FILES}).`
       );
     }
 
@@ -234,66 +234,133 @@ window.AppModules.sourcesAndExtraction = {
     this.stagedFiles = [];
   },
 
+  buildExtractionBatches(items, maxImagesPerBatch = 15, maxBytesPerBatch = 3_800_000) {
+    const batches = [];
+    let current = [];
+    let currentBytes = 0;
+
+    for (const item of items || []) {
+      const fileSize = Number(item?.file?.size) || 0;
+      const wouldExceedCount = current.length >= maxImagesPerBatch;
+      const wouldExceedBytes = current.length > 0 && currentBytes + fileSize > maxBytesPerBatch;
+      if (wouldExceedCount || wouldExceedBytes) {
+        batches.push(current);
+        current = [];
+        currentBytes = 0;
+      }
+      current.push(item);
+      currentBytes += fileSize;
+    }
+
+    if (current.length > 0) {
+      batches.push(current);
+    }
+    return batches;
+  },
+
   async submitSourceExtraction() {
     if (!this.activeModule || this.stagedFiles.length === 0) return;
     this.clearBanners();
 
-    const jobLabel = `Mengekstrak teks & struktur ${this.stagedFiles.length} halaman BMP...`;
-    this.startAiJobFeedback(jobLabel, 'Mengunggah & memproses halaman BMP…');
+    const targetModuleId = this.activeModule.id;
+    const queuedSnapshot = [...this.stagedFiles];
+    const totalCount = queuedSnapshot.length;
+    const batches = this.buildExtractionBatches(queuedSnapshot, 15, 3_800_000);
+    const initialLabel =
+      batches.length > 1
+        ? `Batch 1/${batches.length} — mengekstrak ${batches[0].length} dari ${totalCount} halaman BMP...`
+        : `Mengekstrak teks & struktur ${totalCount} halaman BMP...`;
+    this.startAiJobFeedback(initialLabel, 'Mengunggah & memproses halaman BMP…');
 
-    const formData = new FormData();
-    for (const item of this.stagedFiles) {
-      formData.append('images', item.file);
-      formData.append('pageOrders', String(item.pageOrder));
-    }
-
-    const idemKey = this.generateIdempotencyKey('extract');
+    let extractedPagesTotal = 0;
+    const refreshSourcesProgress = async () => {
+      if (this.activeModule?.id === targetModuleId && this.currentView === 'module') {
+        try {
+          const { ok, data } = await this.fetchJson(`/api/modules/${targetModuleId}`, {
+            headers: { Accept: 'application/json' },
+          });
+          if (ok && data?.module) {
+            this.activeModule = data.module;
+          }
+        } catch (_) {
+          /* silent */
+        }
+      }
+    };
 
     try {
-      const { ok, status, data } = await this.fetchJson(
-        `/api/modules/${this.activeModule.id}/sources/extract`,
-        {
-          method: 'POST',
-          headers: {
-            'Idempotency-Key': idemKey,
-            Accept: 'application/json',
-          },
-          body: formData,
-        },
-        0
-      );
+      for (let bIdx = 0; bIdx < batches.length; bIdx += 1) {
+        const batch = batches[bIdx];
+        const batchLabel =
+          batches.length > 1
+            ? `Batch ${bIdx + 1}/${batches.length} — mengekstrak ${batch.length} dari ${totalCount} halaman BMP...`
+            : `Mengekstrak teks & struktur ${totalCount} halaman BMP...`;
 
-      if (!ok) {
-        throw new Error(this.extractApiErrorMessage(data, status, 'Gagal mengirim gambar untuk diekstrak.'));
+        this.startAiJobFeedback(
+          batchLabel,
+          batches.length > 1
+            ? `Mengunggah batch ${bIdx + 1}/${batches.length} (aman untuk Vercel)…`
+            : 'Mengunggah & memproses halaman BMP…'
+        );
+
+        const formData = new FormData();
+        for (const item of batch) {
+          formData.append('images', item.file);
+          formData.append('pageOrders', String(item.pageOrder));
+        }
+
+        const idemKey = this.generateIdempotencyKey(`extract-b${bIdx + 1}`);
+        const { ok, status, data } = await this.fetchJson(
+          `/api/modules/${targetModuleId}/sources/extract`,
+          {
+            method: 'POST',
+            headers: {
+              'Idempotency-Key': idemKey,
+              Accept: 'application/json',
+            },
+            body: formData,
+          },
+          0
+        );
+
+        if (!ok) {
+          throw new Error(
+            this.extractApiErrorMessage(data, status, 'Gagal mengirim gambar untuk diekstrak.')
+          );
+        }
+
+        await this.waitForAiJobCompletion(data.jobId, batchLabel, refreshSourcesProgress);
+
+        const completedIds = new Set(batch.map((item) => item.id));
+        for (const item of batch) {
+          if (item?.previewUrl) URL.revokeObjectURL(item.previewUrl);
+        }
+        this.stagedFiles = this.stagedFiles.filter((item) => !completedIds.has(item.id));
+        extractedPagesTotal += batch.length;
+
+        if (bIdx < batches.length - 1) {
+          await refreshSourcesProgress();
+        }
       }
 
-      this.clearStagedFiles();
-      const targetModuleId = this.activeModule.id;
-      await this.pollAiJobUntilDone(
-        data.jobId,
-        jobLabel,
-        async (jobResult) => {
-          const modIdToOpen = targetModuleId || jobResult?.resultRefs?.moduleId || jobResult?.targetId;
-          if (modIdToOpen) {
-            await this.openModule(modIdToOpen, 'sources');
-          }
-          await this.refreshSystemStatus();
-          this.showNotice('Ekstraksi selesai! Silakan periksa hasil ekstraksi sebelum membuat Study Pack.');
-        },
-        async () => {
-          if (this.activeModule?.id === targetModuleId && this.currentView === 'module') {
-            try {
-              const { ok, data } = await this.fetchJson(`/api/modules/${targetModuleId}`, { headers: { Accept: 'application/json' } });
-              if (ok && data?.module) {
-                this.activeModule = data.module;
-              }
-            } catch (_) { /* silent */ }
-          }
-        }
+      this.activeAiJob = null;
+      await this.openModule(targetModuleId, 'sources');
+      await this.refreshSystemStatus();
+      this.showNotice(
+        `Ekstraksi ${extractedPagesTotal} halaman selesai! Silakan periksa hasil ekstraksi sebelum membuat Study Pack.`
       );
     } catch (err) {
-      this.clearPendingAiJobFeedback();
-      this.showError(err instanceof Error ? err.message : 'Gagal menjalankan ekstraksi.');
+      this.activeAiJob = null;
+      await refreshSourcesProgress();
+      await this.refreshSystemStatus();
+      const baseErr = err instanceof Error ? err.message : 'Gagal menjalankan ekstraksi.';
+      this.showError(
+        extractedPagesTotal > 0
+          ? `${extractedPagesTotal} halaman awal berhasil disimpan, namun batch berikutnya gagal: ${baseErr} Sisa gambar masih di antrean — klik Ekstrak halaman lagi untuk melanjutkan.`
+          : baseErr
+      );
+    } finally {
+      this.activeAiJob = null;
     }
   },
 

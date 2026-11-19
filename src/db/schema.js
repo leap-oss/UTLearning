@@ -233,3 +233,14 @@ export const aiUsageEvents = pgTable(
     index('ai_usage_events_created_at_idx').on(table.createdAt),
   ]
 );
+
+export const aiProviderCooldowns = pgTable(
+  'ai_provider_cooldowns',
+  {
+    cooldownKey: varchar('cooldown_key', { length: 191 }).primaryKey(),
+    expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+    reason: varchar('reason', { length: 64 }).notNull().default('cooldown'),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [index('ai_provider_cooldowns_expires_at_idx').on(table.expiresAt)]
+);

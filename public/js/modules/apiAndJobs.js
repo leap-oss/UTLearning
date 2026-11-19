@@ -206,6 +206,106 @@ window.AppModules.apiAndJobs = {
     await pollOnce();
   },
 
+  waitForAiJobCompletion(jobId, label, onProgress = null) {
+    return new Promise((resolve, reject) => {
+      if (this.pollingTimer) {
+        clearTimeout(this.pollingTimer);
+        this.pollingTimer = null;
+      }
+
+      const sessionId = (this._pollSessionId || 0) + 1;
+      this._pollSessionId = sessionId;
+      let consecutiveErrors = 0;
+
+      this.activeAiJob = {
+        jobId,
+        label,
+        status: this.activeAiJob?.status || 'Menunggu antrian…',
+        attemptCount: this.activeAiJob?.attemptCount || 1,
+        maxAttempts: 3,
+      };
+
+      const pollOnce = async () => {
+        if (this._pollSessionId !== sessionId) {
+          resolve(null);
+          return;
+        }
+        try {
+          const res = await fetch(`/api/ai/jobs/${jobId}`, {
+            headers: { Accept: 'application/json' },
+          });
+          if (this._pollSessionId !== sessionId) {
+            resolve(null);
+            return;
+          }
+          if (!res.ok) {
+            throw new Error(`Gagal memeriksa status job (${res.status})`);
+          }
+          consecutiveErrors = 0;
+          const job = await res.json();
+          if (this._pollSessionId !== sessionId) {
+            resolve(null);
+            return;
+          }
+
+          const statusLabel =
+            {
+              queued: 'Menunggu antrian…',
+              running: 'Sedang diproses…',
+              processing: 'Sedang diproses…',
+              retrying: 'Mencoba ulang…',
+            }[job.status] || job.status;
+          this.activeAiJob = {
+            ...this.activeAiJob,
+            status: statusLabel,
+            attemptCount: job.attemptCount,
+            maxAttempts: job.maxAttempts,
+          };
+
+          if (job.status === 'succeeded') {
+            this.activeAiJob = null;
+            resolve(job);
+            return;
+          }
+
+          if (job.status === 'failed' || job.status === 'interrupted') {
+            this.activeAiJob = null;
+            const errMsg =
+              job.lastErrorMessage ||
+              `Proses AI berhenti dengan status ${job.status} (${job.lastErrorCode || 'ERROR'}).`;
+            reject(new Error(errMsg));
+            return;
+          }
+
+          if (onProgress) {
+            try {
+              await onProgress();
+            } catch (_) {
+              /* silent */
+            }
+          }
+          if (this._pollSessionId === sessionId) {
+            this.pollingTimer = setTimeout(pollOnce, 1200);
+          }
+        } catch (err) {
+          if (this._pollSessionId !== sessionId) {
+            resolve(null);
+            return;
+          }
+          consecutiveErrors += 1;
+          if (consecutiveErrors <= 3) {
+            this.pollingTimer = setTimeout(pollOnce, 1500);
+            return;
+          }
+          this.activeAiJob = null;
+          reject(err instanceof Error ? err : new Error('Gagal memantau status job AI.'));
+        }
+      };
+
+      pollOnce();
+    });
+  },
+
   get isBusy() {
     return Boolean(
       this.loadingCourses ||

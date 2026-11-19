@@ -3,6 +3,7 @@ import { eq } from 'drizzle-orm';
 import { z } from 'zod';
 import { getDb } from '../../db/client.js';
 import { courses, modules } from '../../db/schema.js';
+import { getEnvConfig } from '../../config/env.js';
 import { generateStructuredContent } from '../geminiClient.js';
 import { validateAndPrepareUploadedImages } from '../extractionService.js';
 import { recordAiUsageEvent } from '../aiJobRepository.js';
@@ -97,6 +98,7 @@ export async function autoMapModulesFromImages({ courseId, files = [] }) {
     },
   };
 
+  const envConfig = getEnvConfig();
   const startedAtMs = Date.now();
   let aiResult;
   try {
@@ -105,10 +107,12 @@ export async function autoMapModulesFromImages({ courseId, files = [] }) {
       contents,
       responseSchema: tocResponseSchema,
       zodSchema: tocSchema,
+      thinkingLevel: 'minimal',
+      fallbackModels: envConfig.geminiOcrFallbackModels,
     });
     await recordAiUsageEvent({
       courseId,
-      model: aiResult?.model || 'gemini-4-hydrogen',
+      model: aiResult?.model || envConfig.geminiOcrModel || 'gemini-3.5-flash-lite',
       taskType: 'extract_toc_modules',
       status: 'succeeded',
       httpStatus: 200,
